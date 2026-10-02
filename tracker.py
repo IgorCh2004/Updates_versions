@@ -6,11 +6,12 @@
 Запуск:
     python tracker.py               обычная проверка
     python tracker.py --dry-run     показать письмо в консоли, ничего не слать и не сохранять
-    python tracker.py --test-email  отправить тестовое письмо с текущими версиями
+    python tracker.py --test-email  отправить тестовое сообщение с текущими версиями
     python tracker.py --debug       напечатать сырой ответ RuStore (для отладки)
 
-Настройки почты берутся из переменных окружения:
-    SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, MAIL_TO (адреса через запятую)
+Куда отправлять — задаётся переменными окружения:
+    Telegram: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID (несколько чатов через запятую)
+    или почта: SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, MAIL_TO
 """
 
 import argparse
@@ -195,6 +196,48 @@ def send_email(message):
     print(f"Письмо отправлено: {', '.join(recipients)}")
 
 
+def send_telegram(releases, errors, test=False):
+    token = os.environ["TELEGRAM_BOT_TOKEN"]
+    chat_ids = [c.strip() for c in os.environ["TELEGRAM_CHAT_ID"].split(",") if c.strip()]
+    messages = []
+    for r in releases:
+        text = (
+            ("[ТЕСТ] " if test else "")
+            + f"{r['name']} — версия {r['version']} ({r['date'] or 'дата не указана'})\n\n"
+            + (r["whats_new"] or "Описание не указано.")
+        )
+        link = "\n\n" + PAGE_URL.format(package=r["package"])
+        messages.append(text[: 4000 - len(link)] + link)  # лимит Telegram — 4096 символов
+    if errors:
+        messages.append(("Не удалось проверить:\n" + "\n".join(f"- {e}" for e in errors))[:4000])
+
+    for chat_id in chat_ids:
+        for text in messages:
+            data = json.dumps(
+                {"chat_id": chat_id, "text": text, "disable_web_page_preview": True}
+            ).encode("utf-8")
+            request = urllib.request.Request(
+                f"https://api.telegram.org/bot{token}/sendMessage",
+                data=data,
+                headers={"Content-Type": "application/json"},
+            )
+            try:
+                urllib.request.urlopen(request, timeout=30).read()
+            except urllib.error.HTTPError as exc:
+                raise RuntimeError(f"Telegram отклонил сообщение: {exc.read().decode()}") from None
+    print(f"Отправлено в Telegram: {len(messages)} сообщ., чатов: {len(chat_ids)}")
+
+
+def notify(releases, errors, test=False):
+    """Telegram, если задан токен бота; иначе почта."""
+    if os.environ.get("TELEGRAM_BOT_TOKEN"):
+        send_telegram(releases, errors, test)
+    elif os.environ.get("SMTP_HOST"):
+        send_email(build_email(releases, errors, test))
+    else:
+        sys.exit("Не заданы ни TELEGRAM_BOT_TOKEN, ни SMTP_HOST — некуда отправлять")
+
+
 # ---------- основной сценарий ----------
 
 def main():
@@ -227,7 +270,7 @@ def main():
         sys.exit("Не удалось получить данные ни по одному приложению")
 
     if args.test_email:
-        send_email(build_email(current, errors, test=True))
+        notify(current, errors, test=True)
         return
 
     # Приложение, которого ещё нет в state, запоминаем без письма
@@ -244,7 +287,7 @@ def main():
             print("Тема:", message["Subject"])
             print(message.get_body(preferencelist=("plain",)).get_content())
         else:
-            send_email(message)
+            notify(new, errors)
     else:
         print("Новых версий нет.")
 
