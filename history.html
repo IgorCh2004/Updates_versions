@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>История версий RuStore</title>
+<style>
+:root { color-scheme: light dark; --bg:#f5f6f8; --card:#fff; --fg:#1d1f23; --muted:#6b7280; --line:#e3e5e9; --accent:#2563eb; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg:#14161a; --card:#1e2127; --fg:#e8eaed; --muted:#9aa0a9; --line:#2d3139; --accent:#6ea0ff; }
+}
+* { box-sizing: border-box; }
+body { margin:0; padding:16px; background:var(--bg); color:var(--fg);
+  font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif; }
+main { max-width:860px; margin:0 auto; }
+h1 { font-size:22px; margin:8px 0 4px; }
+.sub { color:var(--muted); margin:0 0 16px; font-size:13px; }
+.filters { position:sticky; top:0; z-index:1; display:flex; flex-wrap:wrap; gap:8px;
+  padding:10px 0; background:var(--bg); }
+.filters select, .filters input { font:inherit; padding:8px 10px; border:1px solid var(--line);
+  border-radius:8px; background:var(--card); color:var(--fg); }
+.filters input { flex:1 1 220px; min-width:0; }
+.count { color:var(--muted); font-size:13px; margin:4px 0 12px; }
+.card { background:var(--card); border:1px solid var(--line); border-radius:10px;
+  padding:14px 16px; margin-bottom:12px; }
+.head { display:flex; flex-wrap:wrap; gap:4px 12px; align-items:baseline; }
+.app { font-weight:600; }
+.ver { color:var(--accent); font-weight:600; }
+.date { color:var(--muted); font-size:13px; margin-left:auto; }
+.notes { margin:8px 0 0; white-space:pre-wrap; overflow-wrap:anywhere; }
+.none { color:var(--muted); font-style:italic; }
+.link { display:inline-block; margin-top:8px; font-size:13px; color:var(--accent); }
+mark { background:#ffe58a; color:#000; border-radius:2px; }
+.empty { text-align:center; color:var(--muted); padding:32px 0; }
+</style>
+</head>
+<body>
+<main>
+<h1>История версий RuStore</h1>
+<p class="sub">Обновлено: 2026-10-07 09:22 UTC</p>
+<div class="filters">
+  <select id="app" aria-label="Приложение"><option value="">Все приложения</option></select>
+  <input id="q" type="search" placeholder="Поиск по тексту «Что нового»" aria-label="Поиск">
+</div>
+<div class="count" id="count"></div>
+<div id="list"></div>
+</main>
+<script>
+const RELEASES = [{"checked": "2026-10-03", "name": "СберИнвестиции", "package": "ru.sberbank.investor", "version": "4.5.0", "date": "2026-09-30", "whats_new": "Портфель — с пояснениями от ГигаЧат\n— Прямо под стоимостью портфеля появилась новая секция с кратким объяснением причин роста или падения бумаг в вашем портфеле. Нажмите на неё — и помощник раскроет детали на основе последних новостей.\n— Графики в карточках инструментов стали интерактивнее: теперь видны объёмы торгов в цифрах и линия вашей позиции со средней стоимостью бумаг, а заявки можно редактировать прямо на графике. А ещё его можно настроить под себя и выбрать, что отображать."}, {"checked": "2026-10-02", "name": "Т-Инвестиции", "package": "ru.tinkoff.investing", "version": "7.14.0", "date": "2026-09-25", "whats_new": "— Улучшили графики и ленту Пульса.\n— Полноэкранный график теперь можно смотреть в горизонтальном режиме — так удобнее анализировать данные.\n— В ленте появилась кнопка «Не интересно»: можно указать причину (автор, тема или пост), чтобы скрыть нежелательный контент и улучшить рекомендации.\n— Авторы-амбассадоры получили значок «Легенда Пульса», который отображается в профиле и ленте.\n— В каталоге добавилась полка с лучшими авторами для быстрого поиска.\n— А ещё исправили баги и приложение теперь работает стабильнее."}, {"checked": "2026-10-02", "name": "СберИнвестиции", "package": "ru.sberbank.investor", "version": "4.4.0", "date": "2026-09-08", "whats_new": "Осень — время разбираться в деталях. Добавили рейтинг надёжности облигаций. Теперь у каждого выпуска есть оценка и наглядная шкала риска. Фильтруйте, сортируйте и сравнивайте облигации по рейтингу от Интерфакса — в списках, подборках, избранном и поиске. Всё, чтобы ваши решения были точнее."}, {"checked": "2026-10-02", "name": "ВТБ Мои Инвестиции", "package": "ru.vtb.invest", "version": "5.6.1-production", "date": "2026-08-31", "whats_new": "$52"}, {"checked": "2026-10-02", "name": "Альфа-Инвестиции", "package": "ru.alfadirect.app", "version": "2.44.0", "date": "2026-08-26", "whats_new": "• Можно торговать прямо из стакана: размещайте заявки на покупку и продажу и следите за ними\n• На Pro-графике появились интервалы от 2 минут до 12 часов\n• Исправили ошибки и улучшили стабильность"}];
+const $ = id => document.getElementById(id);
+const appSel = $("app"), q = $("q"), list = $("list"), count = $("count");
+
+[...new Set(RELEASES.map(r => r.name))].sort((a, b) => a.localeCompare(b, "ru")).forEach(name => {
+  const o = document.createElement("option");
+  o.value = o.textContent = name;
+  appSel.appendChild(o);
+});
+
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+
+function highlight(parent, text, needle) {
+  if (!needle) { parent.textContent = text; return; }
+  const low = text.toLowerCase();
+  let pos = 0, i;
+  while ((i = low.indexOf(needle, pos)) !== -1) {
+    parent.append(text.slice(pos, i));
+    parent.appendChild(el("mark", "", text.slice(i, i + needle.length)));
+    pos = i + needle.length;
+  }
+  parent.append(text.slice(pos));
+}
+
+function render() {
+  const needle = q.value.trim().toLowerCase();
+  const app = appSel.value;
+  const shown = RELEASES.filter(r =>
+    (!app || r.name === app) &&
+    (!needle || (r.whats_new + " " + r.version).toLowerCase().includes(needle)));
+  list.replaceChildren();
+  count.textContent = "Показано релизов: " + shown.length + " из " + RELEASES.length;
+  if (!shown.length) { list.appendChild(el("div", "empty", "Ничего не найдено")); return; }
+  for (const r of shown) {
+    const card = el("div", "card");
+    const head = el("div", "head");
+    head.append(el("span", "app", r.name), el("span", "ver", r.version),
+                el("span", "date", r.date || "дата не указана"));
+    card.appendChild(head);
+    const notes = el("p", r.whats_new ? "notes" : "notes none");
+    if (r.whats_new) highlight(notes, r.whats_new, needle); else notes.textContent = "Описание не указано.";
+    card.appendChild(notes);
+    const a = el("a", "link", "История версий в RuStore");
+    a.href = "https://www.rustore.ru/catalog/app/" + encodeURIComponent(r.package) + "/versions";
+    a.target = "_blank"; a.rel = "noopener";
+    card.appendChild(a);
+    list.appendChild(card);
+  }
+}
+
+appSel.addEventListener("change", render);
+q.addEventListener("input", render);
+render();
+</script>
+</body>
+</html>
