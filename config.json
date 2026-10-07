@@ -1,8 +1,13 @@
 {
   "apps": [
-    {"package": "ru.vtb.invest", "name": "ВТБ Мои Инвестиции"},
     {"package": "ru.sberbank.investor", "name": "СберИнвестиции"},
     {"package": "ru.alfadirect.app", "name": "Альфа-Инвестиции"},
-    {"package": "ru.tinkoff.investing", "name": "Т-Инвестиции"}
+    {"package": "ru.tinkoff.investing", "name": "Т-Инвестиции"},
+    {"package": "ru.gazprombank.invest", "name": "Газпромбанк Инвестиции"},
+    {"package": "ru.broker.my", "name": "БКС Мир инвестиций"},
+    {"package": "ru.finam.terminal", "name": "Финам (FinamTrade)"},
+    {"package": "ru.sovcombank.investor", "name": "Совкомбанк Инвестиции"},
+    {"package": "mtsit.com.finservice", "name": "МТС Инвестиции"},
+    {"package": "ru.psbank.invest", "name": "ПСБ Инвестиции"}
   ]
 }

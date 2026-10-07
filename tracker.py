@@ -173,116 +173,7 @@ def append_csv(rows):
 
 # ---------- страница истории ----------
 
-HISTORY_TEMPLATE = """<!doctype html>
-<html lang="ru">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>История версий RuStore</title>
-<style>
-:root { color-scheme: light dark; --bg:#f5f6f8; --card:#fff; --fg:#1d1f23; --muted:#6b7280; --line:#e3e5e9; --accent:#2563eb; }
-@media (prefers-color-scheme: dark) {
-  :root { --bg:#14161a; --card:#1e2127; --fg:#e8eaed; --muted:#9aa0a9; --line:#2d3139; --accent:#6ea0ff; }
-}
-* { box-sizing: border-box; }
-body { margin:0; padding:16px; background:var(--bg); color:var(--fg);
-  font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif; }
-main { max-width:860px; margin:0 auto; }
-h1 { font-size:22px; margin:8px 0 4px; }
-.sub { color:var(--muted); margin:0 0 16px; font-size:13px; }
-.filters { position:sticky; top:0; z-index:1; display:flex; flex-wrap:wrap; gap:8px;
-  padding:10px 0; background:var(--bg); }
-.filters select, .filters input { font:inherit; padding:8px 10px; border:1px solid var(--line);
-  border-radius:8px; background:var(--card); color:var(--fg); }
-.filters input { flex:1 1 220px; min-width:0; }
-.count { color:var(--muted); font-size:13px; margin:4px 0 12px; }
-.card { background:var(--card); border:1px solid var(--line); border-radius:10px;
-  padding:14px 16px; margin-bottom:12px; }
-.head { display:flex; flex-wrap:wrap; gap:4px 12px; align-items:baseline; }
-.app { font-weight:600; }
-.ver { color:var(--accent); font-weight:600; }
-.date { color:var(--muted); font-size:13px; margin-left:auto; }
-.notes { margin:8px 0 0; white-space:pre-wrap; overflow-wrap:anywhere; }
-.none { color:var(--muted); font-style:italic; }
-.link { display:inline-block; margin-top:8px; font-size:13px; color:var(--accent); }
-mark { background:#ffe58a; color:#000; border-radius:2px; }
-.empty { text-align:center; color:var(--muted); padding:32px 0; }
-</style>
-</head>
-<body>
-<main>
-<h1>История версий RuStore</h1>
-<p class="sub">Обновлено: __UPDATED__</p>
-<div class="filters">
-  <select id="app" aria-label="Приложение"><option value="">Все приложения</option></select>
-  <input id="q" type="search" placeholder="Поиск по тексту «Что нового»" aria-label="Поиск">
-</div>
-<div class="count" id="count"></div>
-<div id="list"></div>
-</main>
-<script>
-const RELEASES = __DATA__;
-const $ = id => document.getElementById(id);
-const appSel = $("app"), q = $("q"), list = $("list"), count = $("count");
-
-[...new Set(RELEASES.map(r => r.name))].sort((a, b) => a.localeCompare(b, "ru")).forEach(name => {
-  const o = document.createElement("option");
-  o.value = o.textContent = name;
-  appSel.appendChild(o);
-});
-
-function el(tag, cls, text) {
-  const e = document.createElement(tag);
-  if (cls) e.className = cls;
-  if (text !== undefined) e.textContent = text;
-  return e;
-}
-
-function highlight(parent, text, needle) {
-  if (!needle) { parent.textContent = text; return; }
-  const low = text.toLowerCase();
-  let pos = 0, i;
-  while ((i = low.indexOf(needle, pos)) !== -1) {
-    parent.append(text.slice(pos, i));
-    parent.appendChild(el("mark", "", text.slice(i, i + needle.length)));
-    pos = i + needle.length;
-  }
-  parent.append(text.slice(pos));
-}
-
-function render() {
-  const needle = q.value.trim().toLowerCase();
-  const app = appSel.value;
-  const shown = RELEASES.filter(r =>
-    (!app || r.name === app) &&
-    (!needle || (r.whats_new + " " + r.version).toLowerCase().includes(needle)));
-  list.replaceChildren();
-  count.textContent = "Показано релизов: " + shown.length + " из " + RELEASES.length;
-  if (!shown.length) { list.appendChild(el("div", "empty", "Ничего не найдено")); return; }
-  for (const r of shown) {
-    const card = el("div", "card");
-    const head = el("div", "head");
-    head.append(el("span", "app", r.name), el("span", "ver", r.version),
-                el("span", "date", r.date || "дата не указана"));
-    card.appendChild(head);
-    const notes = el("p", r.whats_new ? "notes" : "notes none");
-    if (r.whats_new) highlight(notes, r.whats_new, needle); else notes.textContent = "Описание не указано.";
-    card.appendChild(notes);
-    const a = el("a", "link", "История версий в RuStore");
-    a.href = "https://www.rustore.ru/catalog/app/" + encodeURIComponent(r.package) + "/versions";
-    a.target = "_blank"; a.rel = "noopener";
-    card.appendChild(a);
-    list.appendChild(card);
-  }
-}
-
-appSel.addEventListener("change", render);
-q.addEventListener("input", render);
-render();
-</script>
-</body>
-</html>
-"""
+HISTORY_TEMPLATE_FILE = ROOT / "history_template.html"
 
 
 def read_releases():
@@ -310,20 +201,33 @@ def read_releases():
 
 def build_history():
     """Пересобирает history.html — один самодостаточный файл без внешних зависимостей."""
-    data = json.dumps(read_releases(), ensure_ascii=False).replace("</", "<\\/")
+    apps = load_json(CONFIG_FILE, {}).get("apps", [])
+    packages = {a["package"] for a in apps}
+    # на странице только приложения из config.json (бывшие, например ВТБ, остаются в CSV, но скрыты)
+    releases = [r for r in read_releases() if r["package"] in packages]
+    data = json.dumps(releases, ensure_ascii=False).replace("</", "<\\/")
+    apps_json = json.dumps(apps, ensure_ascii=False).replace("</", "<\\/")
     updated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    template = HISTORY_TEMPLATE_FILE.read_text(encoding="utf-8")
     HISTORY_FILE.write_text(
-        HISTORY_TEMPLATE.replace("__UPDATED__", updated).replace("__DATA__", data),
+        template.replace("__UPDATED__", updated).replace("__DATA__", data).replace("__APPS__", apps_json),
         encoding="utf-8",
     )
-    print(f"Страница истории обновлена: {HISTORY_FILE.name}")
+    print(f"Страница истории обновлена: {HISTORY_FILE.name} (релизов: {len(releases)})")
 
 
 # ---------- письмо ----------
 
-def build_email(releases, errors, test=False):
+def history_url():
+    """Ссылка на опубликованную страницу истории; задаётся переменной HISTORY_URL."""
+    return os.environ.get("HISTORY_URL", "").strip()
+
+
+def build_email(releases, errors, test=False, unchanged=()):
     short = ", ".join(f"{r['name']} {r['version']}" for r in releases)
-    subject = ("[ТЕСТ] " if test else "") + f"RuStore: новые версии — {short}"
+    subject = ("[ТЕСТ] " if test else "") + (
+        f"RuStore: новые версии — {short}" if releases else "RuStore: обновлений нет"
+    )
 
     text_parts, html_parts = [], []
     for r in releases:
@@ -345,6 +249,18 @@ def build_email(releases, errors, test=False):
             "<h3 style='margin:24px 0 4px'>Не удалось проверить</h3><ul>"
             + "".join(f"<li>{html.escape(e)}</li>" for e in errors)
             + "</ul>"
+        )
+    if unchanged:
+        text_parts.append("\n".join(f"{name} — обновлений нет" for name in unchanged) + "\n")
+        html_parts.append(
+            "<p style='margin:24px 0 4px;color:#666'>"
+            + "<br>".join(f"{html.escape(name)} — обновлений нет" for name in unchanged)
+            + "</p>"
+        )
+    if history_url():
+        text_parts.append(f"История обновлений: {history_url()}")
+        html_parts.append(
+            f"<p style='margin:24px 0 0'><a href='{html.escape(history_url())}'>История обновлений</a></p>"
         )
 
     message = EmailMessage()
@@ -382,9 +298,11 @@ def send_email(message):
     print(f"Письмо отправлено: {', '.join(recipients)}")
 
 
-def send_telegram(releases, errors, test=False):
+def send_telegram(releases, errors, test=False, unchanged=()):
     token = os.environ["TELEGRAM_BOT_TOKEN"]
     chat_ids = [c.strip() for c in os.environ["TELEGRAM_CHAT_ID"].split(",") if c.strip()]
+    # в каждом сообщении — ссылка на страницу истории
+    footer = f"\n\nИстория обновлений: {history_url()}" if history_url() else ""
     messages = []
     for r in releases:
         text = (
@@ -392,10 +310,14 @@ def send_telegram(releases, errors, test=False):
             + f"{r['name']} — версия {r['version']} ({r['date'] or 'дата не указана'})\n\n"
             + (r["whats_new"] or "Описание не указано.")
         )
-        link = "\n\n" + PAGE_URL.format(package=r["package"])
+        link = "\n\n" + PAGE_URL.format(package=r["package"]) + footer
         messages.append(text[: 4000 - len(link)] + link)  # лимит Telegram — 4096 символов
+    if unchanged:
+        text = ("[ТЕСТ] " if test else "") + "\n".join(f"{name} — обновлений нет" for name in unchanged)
+        messages.append(text[: 4000 - len(footer)] + footer)
     if errors:
-        messages.append(("Не удалось проверить:\n" + "\n".join(f"- {e}" for e in errors))[:4000])
+        text = "Не удалось проверить:\n" + "\n".join(f"- {e}" for e in errors)
+        messages.append(text[: 4000 - len(footer)] + footer)
 
     for chat_id in chat_ids:
         for text in messages:
@@ -414,12 +336,16 @@ def send_telegram(releases, errors, test=False):
     print(f"Отправлено в Telegram: {len(messages)} сообщ., чатов: {len(chat_ids)}")
 
 
-def notify(releases, errors, test=False):
+def has_channel():
+    return bool(os.environ.get("TELEGRAM_BOT_TOKEN") or os.environ.get("SMTP_HOST"))
+
+
+def notify(releases, errors, test=False, unchanged=()):
     """Telegram, если задан токен бота; иначе почта."""
     if os.environ.get("TELEGRAM_BOT_TOKEN"):
-        send_telegram(releases, errors, test)
+        send_telegram(releases, errors, test, unchanged)
     elif os.environ.get("SMTP_HOST"):
-        send_email(build_email(releases, errors, test))
+        send_email(build_email(releases, errors, test, unchanged))
     else:
         sys.exit("Не заданы ни TELEGRAM_BOT_TOKEN, ни SMTP_HOST — некуда отправлять")
 
@@ -504,16 +430,19 @@ def main():
     for r in baseline:
         print(f"Запомнил текущую версию: {r['name']} {r['version']}")
 
-    if new:
-        message = build_email(new, errors)
-        if args.dry_run:
-            print("\n--- ПИСЬМО (dry-run) ---")
-            print("Тема:", message["Subject"])
-            print(message.get_body(preferencelist=("plain",)).get_content())
-        else:
-            notify(new, errors)
-    else:
+    new_packages = {r["package"] for r in new}
+    unchanged = [r["name"] for r in current if r["package"] not in new_packages]
+
+    if not new:
         print("Новых версий нет.")
+    if args.dry_run:
+        message = build_email(new, errors, unchanged=unchanged)
+        print("\n--- ПИСЬМО (dry-run) ---")
+        print("Тема:", message["Subject"])
+        print(message.get_body(preferencelist=("plain",)).get_content())
+    elif new or has_channel():
+        # каждый день — сводка: новые версии и «обновлений нет» по остальным
+        notify(new, errors, unchanged=unchanged)
 
     if args.dry_run:
         return

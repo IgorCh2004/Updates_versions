@@ -2,7 +2,7 @@ name: RuStore tracker
 
 on:
   schedule:
-    - cron: "0 7 * * *"   # каждый день в 07:00 UTC = 10:00 МСК
+    - cron: "59 20 * * *"   # каждый день в 20:59 UTC = 23:59 МСК (GitHub может запустить с опозданием)
   workflow_dispatch:
     inputs:
       mode:
@@ -13,9 +13,14 @@ on:
           - check
           - test-email
           - debug
+          - backfill
 
 permissions:
   contents: write
+
+concurrency:
+  group: rustore-tracker
+  cancel-in-progress: false
 
 jobs:
   track:
@@ -36,11 +41,13 @@ jobs:
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           MAIL_TO: ${{ secrets.MAIL_TO }}
+          HISTORY_URL: ${{ vars.HISTORY_URL }}
           MODE: ${{ inputs.mode }}
         run: |
           case "$MODE" in
             test-email) python tracker.py --test-email ;;
             debug)      python tracker.py --dry-run --debug ;;
+            backfill)   python tracker.py --backfill ;;
             *)          python tracker.py ;;
           esac
 
@@ -48,5 +55,25 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -A state.json releases.csv 2>/dev/null || true
+          git add -A state.json releases.csv history.html 2>/dev/null || true
           git diff --cached --quiet || (git commit -m "Update tracked versions" && git push)
+
+      # Страница истории выкладывается в отдельный публичный репозиторий с GitHub Pages.
+      # Нужны: переменная HISTORY_REPO (владелец/репозиторий) и секрет HISTORY_REPO_TOKEN.
+      - name: Publish history page
+        if: inputs.mode != 'debug' && inputs.mode != 'test-email'
+        env:
+          HISTORY_REPO: ${{ vars.HISTORY_REPO }}
+          HISTORY_REPO_TOKEN: ${{ secrets.HISTORY_REPO_TOKEN }}
+        run: |
+          if [ -z "$HISTORY_REPO" ] || [ -z "$HISTORY_REPO_TOKEN" ]; then
+            echo "HISTORY_REPO / HISTORY_REPO_TOKEN не заданы — публикация страницы пропущена"
+            exit 0
+          fi
+          git clone --depth 1 "https://x-access-token:${HISTORY_REPO_TOKEN}@github.com/${HISTORY_REPO}.git" pages
+          cp history.html pages/index.html
+          cd pages
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add index.html
+          git diff --cached --quiet || (git commit -m "Update history page" && git push)

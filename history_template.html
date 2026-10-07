@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>История обновлений брокерских приложений</title>
+<style>
+:root { color-scheme: light dark; --bg:#f5f6f8; --card:#fff; --fg:#1d1f23; --muted:#6b7280; --line:#e3e5e9; --accent:#2563eb; --accent-fg:#fff; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg:#14161a; --card:#1e2127; --fg:#e8eaed; --muted:#9aa0a9; --line:#2d3139; --accent:#6ea0ff; --accent-fg:#0b1220; }
+}
+* { box-sizing: border-box; }
+body { margin:0; padding:16px; background:var(--bg); color:var(--fg);
+  font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif; }
+main { max-width:860px; margin:0 auto; }
+h1 { font-size:22px; margin:8px 0 4px; }
+.sub { color:var(--muted); margin:0 0 12px; font-size:13px; }
+.panel { position:sticky; top:0; z-index:1; background:var(--bg); padding:8px 0 10px; border-bottom:1px solid var(--line); }
+.row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:8px; }
+.label { color:var(--muted); font-size:13px; min-width:90px; }
+button.chip { font:inherit; font-size:14px; padding:6px 12px; border:1px solid var(--line); border-radius:999px;
+  background:var(--card); color:var(--fg); cursor:pointer; }
+button.chip[aria-pressed="true"] { background:var(--accent); border-color:var(--accent); color:var(--accent-fg); }
+input[type=date], input[type=search] { font:inherit; padding:6px 10px; border:1px solid var(--line);
+  border-radius:8px; background:var(--card); color:var(--fg); }
+input[type=search] { flex:1 1 220px; min-width:0; }
+.range { display:flex; flex-wrap:wrap; gap:8px; align-items:center; color:var(--muted); font-size:13px; }
+.count { color:var(--muted); font-size:13px; margin:12px 0; }
+.card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px 16px; margin-bottom:12px; }
+.head { display:flex; flex-wrap:wrap; gap:4px 12px; align-items:baseline; }
+.app { font-weight:600; }
+.ver { color:var(--accent); font-weight:600; overflow-wrap:anywhere; }
+.date { color:var(--muted); font-size:13px; margin-left:auto; }
+.notes { margin:8px 0 0; white-space:pre-wrap; overflow-wrap:anywhere; }
+.none { color:var(--muted); font-style:italic; }
+.link { display:inline-block; margin-top:8px; font-size:13px; color:var(--accent); }
+mark { background:#ffe58a; color:#000; border-radius:2px; }
+.empty { text-align:center; color:var(--muted); padding:32px 0; }
+[hidden] { display:none !important; }
+@media (max-width:520px) { .label { min-width:100%; } }
+</style>
+</head>
+<body>
+<main>
+<h1>История обновлений брокерских приложений</h1>
+<p class="sub">Данные RuStore. Обновлено: __UPDATED__</p>
+
+<div class="panel">
+  <div class="row">
+    <span class="label">Период</span>
+    <button class="chip" data-period="week" type="button">Неделя</button>
+    <button class="chip" data-period="month" type="button">Месяц</button>
+    <button class="chip" data-period="custom" type="button">Свой период</button>
+  </div>
+  <div class="row range" id="range" hidden>
+    <span class="label"></span>
+    <label>с <input type="date" id="from"></label>
+    <label>по <input type="date" id="to"></label>
+  </div>
+  <div class="row">
+    <span class="label">Приложение</span>
+    <span class="row" id="apps" style="margin:0"></span>
+  </div>
+  <div class="row" style="margin-bottom:0">
+    <span class="label">Поиск</span>
+    <input id="q" type="search" placeholder="Поиск по тексту «Что нового»" aria-label="Поиск">
+  </div>
+</div>
+
+<div class="count" id="count"></div>
+<div id="list"></div>
+</main>
+<script>
+const RELEASES = __DATA__;
+const APPS = __APPS__;
+const $ = id => document.getElementById(id);
+const state = { period: "month", app: "", from: "", to: "" };
+
+function iso(d) {
+  const p = n => String(n).padStart(2, "0");
+  return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate());
+}
+function daysAgo(n) { const d = new Date(); d.setDate(d.getDate() - n); return iso(d); }
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+function fmtDate(s) { return s ? s.split("-").reverse().join(".") : "дата не указана"; }
+
+// кнопки приложений: «Все» + по одной на приложение из config.json
+function buildAppChips() {
+  const box = $("apps");
+  box.replaceChildren();
+  for (const [value, label] of [["", "Все"], ...APPS.map(a => [a.package, a.name])]) {
+    const b = el("button", "chip", label);
+    b.type = "button";
+    b.dataset.app = value;
+    b.setAttribute("aria-pressed", String(state.app === value));
+    b.addEventListener("click", () => { state.app = value; sync(); });
+    box.appendChild(b);
+  }
+}
+
+function range() {
+  if (state.period === "week") return [daysAgo(7), iso(new Date())];
+  if (state.period === "month") return [daysAgo(30), iso(new Date())];
+  return [state.from || "0000-01-01", state.to || "9999-12-31"];
+}
+
+function highlight(parent, text, needle) {
+  if (!needle) { parent.textContent = text; return; }
+  const low = text.toLowerCase();
+  let pos = 0, i;
+  while ((i = low.indexOf(needle, pos)) !== -1) {
+    parent.append(text.slice(pos, i));
+    parent.appendChild(el("mark", "", text.slice(i, i + needle.length)));
+    pos = i + needle.length;
+  }
+  parent.append(text.slice(pos));
+}
+
+function render() {
+  const [from, to] = range();
+  const needle = $("q").value.trim().toLowerCase();
+  const byApp = RELEASES.filter(r => !state.app || r.package === state.app);
+  const shown = byApp.filter(r => {
+    const d = r.date || r.checked;
+    return d >= from && d <= to &&
+      (!needle || (r.whats_new + " " + r.version).toLowerCase().includes(needle));
+  });
+  const list = $("list");
+  list.replaceChildren();
+  $("count").textContent = "Обновлений за период: " + shown.length +
+    (state.period === "custom" ? "" : " (" + fmtDate(from) + " — " + fmtDate(to) + ")");
+  if (!shown.length) {
+    const e = el("div", "empty", "За выбранный период обновлений нет.");
+    if (byApp.length) {
+      const last = byApp[0];
+      e.appendChild(el("div", "", "Последнее обновление: " + last.name + " " + last.version + ", " + fmtDate(last.date)));
+    }
+    list.appendChild(e);
+    return;
+  }
+  for (const r of shown) {
+    const card = el("div", "card");
+    const head = el("div", "head");
+    head.append(el("span", "app", r.name), el("span", "ver", r.version), el("span", "date", fmtDate(r.date)));
+    card.appendChild(head);
+    const notes = el("p", r.whats_new ? "notes" : "notes none");
+    if (r.whats_new) highlight(notes, r.whats_new, needle); else notes.textContent = "Описание не указано.";
+    card.appendChild(notes);
+    const a = el("a", "link", "Страница в RuStore");
+    a.href = "https://www.rustore.ru/catalog/app/" + encodeURIComponent(r.package) + "/versions";
+    a.target = "_blank"; a.rel = "noopener";
+    card.appendChild(a);
+    list.appendChild(card);
+  }
+}
+
+function sync() {
+  document.querySelectorAll("[data-period]").forEach(b =>
+    b.setAttribute("aria-pressed", String(b.dataset.period === state.period)));
+  document.querySelectorAll("[data-app]").forEach(b =>
+    b.setAttribute("aria-pressed", String(b.dataset.app === state.app)));
+  $("range").hidden = state.period !== "custom";
+  render();
+}
+
+document.querySelectorAll("[data-period]").forEach(b => b.addEventListener("click", () => {
+  state.period = b.dataset.period;
+  if (state.period === "custom" && !state.from) {
+    state.from = daysAgo(30); state.to = iso(new Date());
+    $("from").value = state.from; $("to").value = state.to;
+  }
+  sync();
+}));
+$("from").addEventListener("change", e => { state.from = e.target.value; render(); });
+$("to").addEventListener("change", e => { state.to = e.target.value; render(); });
+$("q").addEventListener("input", render);
+
+buildAppChips();
+sync();
+</script>
+</body>
+</html>
