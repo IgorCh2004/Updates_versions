@@ -22,9 +22,10 @@ h1 { font-size:22px; margin:8px 0 4px; }
 button.chip { font:inherit; font-size:14px; padding:6px 12px; border:1px solid var(--line); border-radius:999px;
   background:var(--card); color:var(--fg); cursor:pointer; }
 button.chip[aria-pressed="true"] { background:var(--accent); border-color:var(--accent); color:var(--accent-fg); }
-input[type=date], input[type=search] { font:inherit; padding:6px 10px; border:1px solid var(--line);
+select, input[type=date], input[type=search] { font:inherit; padding:6px 10px; border:1px solid var(--line);
   border-radius:8px; background:var(--card); color:var(--fg); }
 input[type=search] { flex:1 1 220px; min-width:0; }
+select { cursor:pointer; min-width:180px; }
 .range { display:flex; flex-wrap:wrap; gap:8px; align-items:center; color:var(--muted); font-size:13px; }
 .count { color:var(--muted); font-size:13px; margin:12px 0; }
 .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px 16px; margin-bottom:12px; }
@@ -44,16 +45,18 @@ mark { background:#ffe58a; color:#000; border-radius:2px; }
 <body>
 <main>
 <h1>История обновлений брокерских приложений</h1>
-<p class="sub">Данные RuStore. Обновлено: 2026-10-13 11:23 UTC</p>
+<p class="sub">Данные RuStore. Обновлено: 2026-10-13 11:27 UTC</p>
 
 <div class="panel">
   <div class="row">
     <span class="label">Период</span>
-    <button class="chip" data-period="day" type="button">День</button>
-    <button class="chip" data-period="week" type="button">Неделя</button>
-    <button class="chip" data-period="month" type="button">Месяц</button>
-    <button class="chip" data-period="all" type="button">Всё время</button>
-    <button class="chip" data-period="custom" type="button">Свой период</button>
+    <select id="period" aria-label="Период">
+      <option value="day">День</option>
+      <option value="week">Неделя</option>
+      <option value="month">Месяц</option>
+      <option value="all">Всё время</option>
+      <option value="custom">Свой период…</option>
+    </select>
   </div>
   <div class="row range" id="range" hidden>
     <span class="label"></span>
@@ -62,7 +65,7 @@ mark { background:#ffe58a; color:#000; border-radius:2px; }
   </div>
   <div class="row">
     <span class="label">Приложение</span>
-    <span class="row" id="apps" style="margin:0"></span>
+    <select id="apps" aria-label="Приложение"></select>
   </div>
   <div class="row" style="margin-bottom:0">
     <span class="label">Поиск</span>
@@ -92,18 +95,16 @@ function el(tag, cls, text) {
 }
 function fmtDate(s) { return s ? s.split("-").reverse().join(".") : "дата не указана"; }
 
-// кнопки приложений: «Все» + по одной на приложение из config.json
-function buildAppChips() {
+// выпадающий список приложений: «Все» + по одному на приложение из config.json
+function buildAppSelect() {
   const box = $("apps");
   box.replaceChildren();
-  for (const [value, label] of [["", "Все"], ...APPS.map(a => [a.package, a.name])]) {
-    const b = el("button", "chip", label);
-    b.type = "button";
-    b.dataset.app = value;
-    b.setAttribute("aria-pressed", String(state.app === value));
-    b.addEventListener("click", () => { state.app = value; sync(); });
-    box.appendChild(b);
+  for (const [value, label] of [["", "Все приложения"], ...APPS.map(a => [a.package, a.name])]) {
+    const o = el("option", "", label);
+    o.value = value;
+    box.appendChild(o);
   }
+  box.addEventListener("change", () => { state.app = box.value; render(); });
 }
 
 function range() {
@@ -165,27 +166,25 @@ function render() {
 }
 
 function sync() {
-  document.querySelectorAll("[data-period]").forEach(b =>
-    b.setAttribute("aria-pressed", String(b.dataset.period === state.period)));
-  document.querySelectorAll("[data-app]").forEach(b =>
-    b.setAttribute("aria-pressed", String(b.dataset.app === state.app)));
+  $("period").value = state.period;
+  $("apps").value = state.app;
   $("range").hidden = state.period !== "custom";
   render();
 }
 
-document.querySelectorAll("[data-period]").forEach(b => b.addEventListener("click", () => {
-  state.period = b.dataset.period;
+$("period").addEventListener("change", e => {
+  state.period = e.target.value;
   if (state.period === "custom" && !state.from) {
     state.from = daysAgo(30); state.to = iso(new Date());
     $("from").value = state.from; $("to").value = state.to;
   }
   sync();
-}));
+});
 $("from").addEventListener("change", e => { state.from = e.target.value; render(); });
 $("to").addEventListener("change", e => { state.to = e.target.value; render(); });
 $("q").addEventListener("input", render);
 
-buildAppChips();
+buildAppSelect();
 sync();
 </script>
 </body>
