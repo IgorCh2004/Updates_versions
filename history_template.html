@@ -6,9 +6,11 @@
 <meta name="robots" content="noindex, nofollow">
 <title>История обновлений брокерских приложений</title>
 <style>
-:root { color-scheme: light dark; --bg:#f5f6f8; --card:#fff; --fg:#1d1f23; --muted:#6b7280; --line:#e3e5e9; --accent:#2563eb; --accent-fg:#fff; }
+:root { color-scheme: light dark; --bg:#f5f6f8; --card:#fff; --fg:#1d1f23; --muted:#6b7280; --line:#e3e5e9; --accent:#2563eb; --accent-fg:#fff;
+  --ok:#15803d; --ok-bg:#dcfce7; --bad:#b91c1c; --bad-bg:#fee2e2; --warn:#92400e; --warn-bg:#fef3c7; }
 @media (prefers-color-scheme: dark) {
-  :root { --bg:#14161a; --card:#1e2127; --fg:#e8eaed; --muted:#9aa0a9; --line:#2d3139; --accent:#6ea0ff; --accent-fg:#0b1220; }
+  :root { --bg:#14161a; --card:#1e2127; --fg:#e8eaed; --muted:#9aa0a9; --line:#2d3139; --accent:#6ea0ff; --accent-fg:#0b1220;
+    --ok:#86efac; --ok-bg:#14301f; --bad:#fca5a5; --bad-bg:#3b1a1a; --warn:#fcd34d; --warn-bg:#3a2e12; }
 }
 * { box-sizing: border-box; }
 body { margin:0; padding:16px; background:var(--bg); color:var(--fg);
@@ -38,6 +40,26 @@ select { cursor:pointer; min-width:180px; }
 .notes { margin:8px 0 0; white-space:pre-wrap; overflow-wrap:anywhere; }
 .none { color:var(--muted); font-style:italic; }
 .link { display:inline-block; margin-top:8px; font-size:13px; color:var(--accent); }
+.badge { font-size:12px; font-weight:600; padding:2px 9px; border-radius:999px; white-space:nowrap; }
+.badge.pending { background:var(--warn-bg); color:var(--warn); }
+.badge.approved { background:var(--ok-bg); color:var(--ok); }
+.badge.rejected { background:var(--bad-bg); color:var(--bad); }
+.card.rejected { opacity:.65; }
+.actions { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:12px; }
+.actions .link { margin:0 auto 0 0; }
+.state { font-size:13px; color:var(--muted); }
+button.act { font:inherit; font-size:14px; padding:6px 14px; border:1px solid var(--line); border-radius:8px; cursor:pointer; }
+button.act:disabled { opacity:.5; cursor:default; }
+button.act.ok { background:var(--ok-bg); border-color:var(--ok); color:var(--ok); font-weight:600; }
+button.act.bad { background:var(--bad-bg); border-color:var(--bad); color:var(--bad); font-weight:600; }
+.msg { margin:10px 0; padding:8px 12px; border-radius:8px; font-size:14px; background:var(--warn-bg); color:var(--warn); }
+details.token { margin:28px 0 8px; color:var(--muted); font-size:13px; }
+details.token summary { cursor:pointer; }
+details.token p { margin:8px 0; }
+input[type=password] { font:inherit; padding:6px 10px; border:1px solid var(--line); border-radius:8px;
+  background:var(--card); color:var(--fg); flex:1 1 260px; min-width:0; }
+button.plain { font:inherit; font-size:14px; padding:6px 12px; border:1px solid var(--line); border-radius:8px;
+  background:var(--card); color:var(--fg); cursor:pointer; }
 mark { background:#ffe58a; color:#000; border-radius:2px; }
 .empty { text-align:center; color:var(--muted); padding:32px 0; }
 [hidden] { display:none !important; }
@@ -70,6 +92,15 @@ mark { background:#ffe58a; color:#000; border-radius:2px; }
     <img id="appico" class="ico ico-sel" alt="" hidden>
     <select id="apps" aria-label="Приложение"></select>
   </div>
+  <div class="row">
+    <span class="label">Статус</span>
+    <select id="status" aria-label="Статус">
+      <option value="">Все</option>
+      <option value="approved">Подтверждённые</option>
+      <option value="pending">Не подтверждённые</option>
+      <option value="rejected">Отклонённые</option>
+    </select>
+  </div>
   <div class="row" style="margin-bottom:0">
     <span class="label">Поиск</span>
     <input id="q" type="search" placeholder="Поиск по тексту «Что нового»" aria-label="Поиск">
@@ -77,14 +108,31 @@ mark { background:#ffe58a; color:#000; border-radius:2px; }
 </div>
 
 <div class="count" id="count"></div>
+<div class="msg" id="msg" hidden></div>
 <div id="list"></div>
+
+<details class="token" id="tokenBox">
+  <summary>Для проверяющих</summary>
+  <p>Чтобы подтверждать или отклонять обновления, нужен GitHub-токен с правом записи в репозиторий (fine-grained, Contents: Read and write, только для __REPO__). Он хранится только в этом браузере. С токеном у неподтверждённых версий появляются кнопки.</p>
+  <div class="row">
+    <input type="password" id="token" placeholder="github_pat_..." autocomplete="off" aria-label="GitHub-токен">
+    <button type="button" class="plain" id="saveToken">Сохранить</button>
+    <button type="button" class="plain" id="clearToken">Удалить</button>
+  </div>
+  <p id="tokenState"></p>
+</details>
 </main>
 <script>
 const RELEASES = __DATA__;
 const APPS = __APPS__;
+const STATUS = __STATUS__;   // «пакет|версия» → pending / approved / rejected; у старых версий статуса нет
+const REPO = "__REPO__";
+const BRANCH = "main";
+const BADGES = { pending: "Не подтверждено", approved: "Подтверждено", rejected: "Отклонено" };
 const $ = id => document.getElementById(id);
 const ICONS = Object.fromEntries(APPS.filter(a => a.icon).map(a => [a.package, a.icon]));
-const state = { period: "month", app: "", from: "", to: "" };
+const state = { period: "month", app: "", status: "", from: "", to: "" };
+const busy = new Set();   // версии, по которым сейчас записывается решение
 
 function iso(d) {
   const p = n => String(n).padStart(2, "0");
@@ -109,6 +157,83 @@ function buildAppSelect() {
     box.appendChild(o);
   }
   box.addEventListener("change", () => { state.app = box.value; sync(); });
+}
+
+const keyOf = r => r.package + "|" + r.version;
+const statusOf = r => STATUS[keyOf(r)] || "";
+function showMsg(text) { $("msg").textContent = text; $("msg").hidden = !text; }
+
+// токен хранится только в браузере; доступ к хранилищу может быть закрыт — страница должна работать и без него
+function getToken() { try { return localStorage.getItem("gh_token") || ""; } catch (e) { return ""; } }
+function setToken(v) { try { v ? localStorage.setItem("gh_token", v) : localStorage.removeItem("gh_token"); } catch (e) {} }
+function refreshTokenState() {
+  $("tokenState").textContent = getToken() ? "Токен сохранён в этом браузере: кнопки подтверждения включены." : "";
+}
+function b64decode(s) {
+  const bin = atob(s.replace(/\s/g, ""));
+  return new TextDecoder().decode(Uint8Array.from(bin, c => c.charCodeAt(0)));
+}
+function b64encode(s) {
+  let bin = "";
+  for (const b of new TextEncoder().encode(s)) bin += String.fromCharCode(b);
+  return btoa(bin);
+}
+
+// решение дописывается в decisions.json; GitHub-workflow сам отправит сообщение в Telegram
+async function writeDecision(release, value) {
+  const token = getToken();
+  const url = "https://api.github.com/repos/" + REPO + "/contents/decisions.json";
+  const headers = { Authorization: "Bearer " + token, Accept: "application/vnd.github+json" };
+  for (let attempt = 0; attempt < 3; attempt++) {
+    let sha, data = {};
+    const get = await fetch(url + "?ref=" + BRANCH, { headers, cache: "no-store" });
+    if (get.status === 200) {
+      const j = await get.json();
+      sha = j.sha;
+      data = JSON.parse(b64decode(j.content) || "{}");
+    } else if (get.status === 401 || get.status === 403) {
+      throw new Error("GitHub не принял токен. Проверьте, что у него есть право Contents: Read and write.");
+    } else if (get.status !== 404) {
+      throw new Error("GitHub ответил " + get.status + " при чтении решений.");
+    }
+    data[keyOf(release)] = value;
+    const body = {
+      message: (value === "approved" ? "Подтверждено: " : "Отклонено: ") + release.name + " " + release.version,
+      content: b64encode(JSON.stringify(data, null, 2) + "\n"),
+      branch: BRANCH,
+    };
+    if (sha) body.sha = sha;
+    const put = await fetch(url, { method: "PUT", headers, body: JSON.stringify(body) });
+    if (put.ok) return;
+    if (put.status === 409 || put.status === 422) continue;   // файл изменили параллельно — читаем заново
+    if (put.status === 401 || put.status === 403 || put.status === 404)
+      throw new Error("Нет прав на запись в " + REPO + ". Проверьте токен.");
+    throw new Error("GitHub ответил " + put.status + " при записи решения.");
+  }
+  throw new Error("Не удалось записать решение: файл решений часто меняется. Попробуйте ещё раз.");
+}
+
+async function decide(release, value) {
+  showMsg("");
+  busy.add(keyOf(release)); render();
+  try {
+    await writeDecision(release, value);
+    STATUS[keyOf(release)] = value;   // плашка меняется сразу, не дожидаясь пересборки страницы
+  } catch (e) {
+    showMsg(e.message || String(e));
+  }
+  busy.delete(keyOf(release)); render();
+}
+
+// решения, принятые после последней пересборки страницы
+async function loadDecisions() {
+  try {
+    const r = await fetch("https://api.github.com/repos/" + REPO + "/contents/decisions.json?ref=" + BRANCH,
+      { headers: { Accept: "application/vnd.github+json" }, cache: "no-store" });
+    if (!r.ok) return;
+    Object.assign(STATUS, JSON.parse(b64decode((await r.json()).content) || "{}"));
+    render();
+  } catch (e) {}
 }
 
 function range() {
@@ -137,7 +262,7 @@ function render() {
   const byApp = RELEASES.filter(r => !state.app || r.package === state.app);
   const shown = byApp.filter(r => {
     const d = r.date || r.checked;
-    return d >= from && d <= to &&
+    return d >= from && d <= to && (!state.status || statusOf(r) === state.status) &&
       (!needle || (r.whats_new + " " + r.version).toLowerCase().includes(needle));
   });
   const list = $("list");
@@ -154,12 +279,15 @@ function render() {
     return;
   }
   for (const r of shown) {
-    const card = el("div", "card");
+    const st = statusOf(r);
+    const card = el("div", "card" + (st === "rejected" ? " rejected" : ""));
     const head = el("div", "head");
     const app = el("span", "app");
     if (ICONS[r.package]) { const img = el("img", "ico"); img.src = ICONS[r.package]; img.alt = ""; app.appendChild(img); }
     app.append(r.name);
-    head.append(app, el("span", "ver", r.version), el("span", "date", fmtDate(r.date)));
+    head.append(app, el("span", "ver", r.version));
+    if (BADGES[st]) head.appendChild(el("span", "badge " + st, BADGES[st]));
+    head.appendChild(el("span", "date", fmtDate(r.date)));
     card.appendChild(head);
     const notes = el("p", r.whats_new ? "notes" : "notes none");
     if (r.whats_new) highlight(notes, r.whats_new, needle); else notes.textContent = "Описание не указано.";
@@ -167,7 +295,20 @@ function render() {
     const a = el("a", "link", "Страница в RuStore");
     a.href = "https://www.rustore.ru/catalog/app/" + encodeURIComponent(r.package) + "/versions";
     a.target = "_blank"; a.rel = "noopener";
-    card.appendChild(a);
+    if (st === "pending" && getToken()) {   // кнопки видит только тот, кто сохранил токен
+      const actions = el("div", "actions");
+      const state_ = el("span", "state", busy.has(keyOf(r)) ? "Записываю…" : "");
+      const bad = el("button", "act bad", "Отклонить"); bad.type = "button";
+      const ok = el("button", "act ok", "Подтвердить"); ok.type = "button";
+      ok.disabled = bad.disabled = busy.has(keyOf(r));
+      ok.addEventListener("click", () => decide(r, "approved"));
+      bad.addEventListener("click", () => decide(r, "rejected"));
+      a.style.marginTop = "0";
+      actions.append(a, state_, bad, ok);
+      card.appendChild(actions);
+    } else {
+      card.appendChild(a);
+    }
     list.appendChild(card);
   }
 }
@@ -175,6 +316,7 @@ function render() {
 function sync() {
   $("period").value = state.period;
   $("apps").value = state.app;
+  $("status").value = state.status;
   $("appico").hidden = !ICONS[state.app];
   if (ICONS[state.app]) $("appico").src = ICONS[state.app];
   $("range").hidden = state.period !== "custom";
@@ -192,9 +334,14 @@ $("period").addEventListener("change", e => {
 $("from").addEventListener("change", e => { state.from = e.target.value; render(); });
 $("to").addEventListener("change", e => { state.to = e.target.value; render(); });
 $("q").addEventListener("input", render);
+$("status").addEventListener("change", e => { state.status = e.target.value; render(); });
+$("saveToken").addEventListener("click", () => { setToken($("token").value.trim()); $("token").value = ""; refreshTokenState(); render(); });
+$("clearToken").addEventListener("click", () => { setToken(""); refreshTokenState(); render(); });
+refreshTokenState();
 
 buildAppSelect();
 sync();
+loadDecisions();
 </script>
 </body>
 </html>

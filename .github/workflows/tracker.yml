@@ -60,5 +60,5 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -A state.json releases.csv history.html docs pending.json rejected.json 2>/dev/null || true
+          git add -A state.json releases.csv history.html docs pending.json 2>/dev/null || true
           git diff --cached --quiet || (git commit -m "Update tracked versions" && git pull --rebase -q && git push)
