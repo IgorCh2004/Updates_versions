@@ -3,10 +3,6 @@ name: RuStore tracker
 on:
   schedule:
     - cron: "59 20 * * *"   # каждый день в 20:59 UTC = 23:59 МСК (GitHub может запустить с опозданием)
-  # решение с вкладки проверки записывается в decisions.json — сразу применяем его
-  push:
-    branches: [main]
-    paths: [decisions.json]
   workflow_dispatch:
     inputs:
       mode:
@@ -47,13 +43,12 @@ jobs:
           MAIL_TO: ${{ secrets.MAIL_TO }}
           HISTORY_URL: ${{ vars.HISTORY_URL }}
           MODE: ${{ inputs.mode }}
-          EVENT: ${{ github.event_name }}
         run: |
           case "$MODE" in
             test-email) python tracker.py --test-email ;;
             debug)      python tracker.py --dry-run --debug ;;
             backfill)   python tracker.py --backfill ;;
-            *)          if [ "$EVENT" = "push" ]; then python tracker.py --apply-decisions; else python tracker.py; fi ;;
+            *)          python tracker.py ;;
           esac
 
       - name: Save state

@@ -3,12 +3,11 @@
 Раз в день проверяет приложения из config.json. Если вышла новая версия,
 отправляет одно письмо-сводку и дописывает строку в releases.csv.
 
-Новая версия сразу появляется в истории с плашкой «Не подтверждено»; кнопка «Подтвердить» на
-странице истории меняет плашку (решения записываются в decisions.json).
+Новая версия сразу появляется в истории с плашкой «Не проверено»; кнопка «Проверить» на странице
+истории меняет её на зелёную «Проверено» (отметка хранится в браузере того, кто нажал).
 
 Запуск:
     python tracker.py               обычная проверка
-    python tracker.py --apply-decisions   применить решения из decisions.json
     python tracker.py --dry-run     показать письмо в консоли, ничего не слать и не сохранять
     python tracker.py --test-email  отправить тестовое сообщение с текущими версиями
     python tracker.py --debug       напечатать сырой ответ RuStore (для отладки)
@@ -41,9 +40,7 @@ STATE_FILE = ROOT / "state.json"
 CSV_FILE = ROOT / "releases.csv"
 HISTORY_FILE = ROOT / "history.html"
 ICONS_DIR = ROOT / "icons"
-PENDING_FILE = ROOT / "pending.json"        # новые версии, о подтверждении которых ещё не сообщили
-DECISIONS_FILE = ROOT / "decisions.json"    # решения «подтверждено / отклонено»; их записывает страница истории
-REVIEW_LABEL = "НЕ ПОДТВЕРЖДЕНО"
+PENDING_FILE = ROOT / "pending.json"        # новые версии: на странице у них кнопка «Проверить»
 SITE_DIR = ROOT / "docs"  # папка, которую публикует GitHub Pages: только страница истории
 
 API_URL = "https://backapi.rustore.ru/applicationData/overallInfo/{package}"
@@ -223,11 +220,9 @@ def apps_with_icons():
     return apps
 
 
-def review_status():
-    """«пакет|версия» → pending / approved / rejected. У старых версий статуса нет — плашки на них не показываются."""
-    status = {f"{r['package']}|{r['version']}": "pending" for r in load_json(PENDING_FILE, [])}
-    status.update(load_json(DECISIONS_FILE, {}))
-    return status
+def unchecked_keys():
+    """«пакет|версия» новых версий: на странице у них плашка и кнопка «Проверить». У старых версий их нет."""
+    return [f"{r['package']}|{r['version']}" for r in load_json(PENDING_FILE, [])]
 
 
 def add_pending(releases, today):
@@ -254,8 +249,7 @@ def build_history():
     template = HISTORY_TEMPLATE_FILE.read_text(encoding="utf-8")
     page = (
         template.replace("__UPDATED__", updated).replace("__DATA__", data).replace("__APPS__", apps_json)
-        .replace("__STATUS__", json.dumps(review_status(), ensure_ascii=False).replace("</", "<\\/"))
-        .replace("__REPO__", os.environ.get("GITHUB_REPOSITORY", "IgorCh2004/Updates_versions"))
+        .replace("__UNCHECKED__", json.dumps(unchecked_keys(), ensure_ascii=False).replace("</", "<\\/"))
     )
     HISTORY_FILE.write_text(page, encoding="utf-8")
     SITE_DIR.mkdir(exist_ok=True)
@@ -270,10 +264,11 @@ def history_url():
     return os.environ.get("HISTORY_URL", "").strip()
 
 
-def build_email(releases, errors, test=False, unchanged=(), label=""):
+def build_email(releases, errors, test=False, unchanged=()):
     short = ", ".join(f"{r['name']} {r['version']}" for r in releases)
-    heading = f"RuStore [{label}]: {short}" if label else f"RuStore: новые версии — {short}"
-    subject = ("[ТЕСТ] " if test else "") + (heading if releases else "RuStore: обновлений нет")
+    subject = ("[ТЕСТ] " if test else "") + (
+        f"RuStore: новые версии — {short}" if releases else "RuStore: обновлений нет"
+    )
 
     text_parts, html_parts = [], []
     for r in releases:
@@ -344,16 +339,15 @@ def send_email(message):
     print(f"Письмо отправлено: {', '.join(recipients)}")
 
 
-def send_telegram(releases, errors, test=False, unchanged=(), label=""):
+def send_telegram(releases, errors, test=False, unchanged=()):
     token = os.environ["TELEGRAM_BOT_TOKEN"]
     chat_ids = [c.strip() for c in os.environ["TELEGRAM_CHAT_ID"].split(",") if c.strip()]
     # в каждом сообщении — ссылка на страницу истории
     footer = f"\n\nИстория обновлений: {history_url()}" if history_url() else ""
-    tag = ("[ТЕСТ] " if test else "") + (f"[{label}] " if label else "")
     messages = []
     for r in releases:
         text = (
-            tag
+            ("[ТЕСТ] " if test else "")
             + f"{r['name']} — версия {r['version']} ({r['date'] or 'дата не указана'})\n\n"
             + (r["whats_new"] or "Описание не указано.")
         )
@@ -387,32 +381,14 @@ def has_channel():
     return bool(os.environ.get("TELEGRAM_BOT_TOKEN") or os.environ.get("SMTP_HOST"))
 
 
-def notify(releases, errors, test=False, unchanged=(), label=""):
+def notify(releases, errors, test=False, unchanged=()):
     """Telegram, если задан токен бота; иначе почта."""
     if os.environ.get("TELEGRAM_BOT_TOKEN"):
-        send_telegram(releases, errors, test, unchanged, label)
+        send_telegram(releases, errors, test, unchanged)
     elif os.environ.get("SMTP_HOST"):
-        send_email(build_email(releases, errors, test, unchanged, label))
+        send_email(build_email(releases, errors, test, unchanged))
     else:
         sys.exit("Не заданы ни TELEGRAM_BOT_TOKEN, ни SMTP_HOST — некуда отправлять")
-
-
-# ---------- проверка обновлений ----------
-
-def apply_decisions(dry_run=False):
-    """По решениям из decisions.json сообщает о подтверждённых версиях и убирает решённые из очереди."""
-    pending = load_json(PENDING_FILE, [])
-    decisions = load_json(DECISIONS_FILE, {})
-    approved, rejected, waiting = [], [], []
-    for r in pending:
-        decision = decisions.get(f"{r['package']}|{r['version']}")
-        {"approved": approved, "rejected": rejected}.get(decision, waiting).append(r)
-    print(f"Проверка: подтверждено {len(approved)}, отклонено {len(rejected)}, ждут решения {len(waiting)}")
-    if dry_run or not (approved or rejected):
-        return
-    if approved and has_channel():
-        notify(approved, [], label="ПОДТВЕРЖДЕНО")
-    save_json(PENDING_FILE, waiting)  # дойдём сюда, только если сообщение ушло без ошибки
 
 
 # ---------- заполнение истории ----------
@@ -454,16 +430,9 @@ def main():
     parser.add_argument("--dry-run", action="store_true", help="ничего не отправлять и не сохранять")
     parser.add_argument("--test-email", action="store_true", help="отправить тестовое письмо с текущими версиями")
     parser.add_argument("--debug", action="store_true", help="печатать сырой ответ RuStore")
-    parser.add_argument("--apply-decisions", action="store_true", help="применить решения из decisions.json и пересобрать страницу")
     parser.add_argument("--backfill", action="store_true", help="один раз заполнить историю прошлыми версиями со страницы RuStore")
     args = parser.parse_args()
     DEBUG = args.debug
-
-    if args.apply_decisions:
-        apply_decisions(dry_run=args.dry_run)
-        if not args.dry_run:
-            build_history()
-        return
 
     apps = load_json(CONFIG_FILE, {}).get("apps", [])
     if not apps:
@@ -475,9 +444,6 @@ def main():
     if args.backfill:
         backfill(apps, state, today, dry_run=args.dry_run)
         return
-
-    if not (args.dry_run or args.test_email):
-        apply_decisions()  # решения, принятые с прошлой проверки
 
     current, errors = [], []
     for i, app in enumerate(apps):
@@ -511,13 +477,13 @@ def main():
     if not new:
         print("Новых версий нет.")
     if args.dry_run:
-        message = build_email(new, errors, unchanged=unchanged, label=REVIEW_LABEL if new else "")
+        message = build_email(new, errors, unchanged=unchanged)
         print("\n--- ПИСЬМО (dry-run) ---")
         print("Тема:", message["Subject"])
         print(message.get_body(preferencelist=("plain",)).get_content())
     elif new or has_channel():
         # каждый день — сводка: новые версии (на проверку) и «обновлений нет» по остальным
-        notify(new, errors, unchanged=unchanged, label=REVIEW_LABEL if new else "")
+        notify(new, errors, unchanged=unchanged)
 
     if args.dry_run:
         return
@@ -527,7 +493,7 @@ def main():
         state[r["package"]] = r["version"]
     save_state(state)
     append_csv([[today, r["name"], r["package"], r["version"], r["date"], r["whats_new"]] for r in baseline + new])
-    add_pending(new, today)  # в истории новая версия помечена «не подтверждено», пока кто-то не нажмёт «Подтвердить»
+    add_pending(new, today)  # на странице новая версия помечена «не проверено», пока кто-то не нажмёт «Проверить»
     build_history()
 
 
