@@ -37,7 +37,7 @@ STATE_FILE = ROOT / "state.json"
 CSV_FILE = ROOT / "releases.csv"
 HISTORY_FILE = ROOT / "history.html"
 ICONS_DIR = ROOT / "icons"
-SITE_DIR = ROOT / "site"  # то, что публикует Cloudflare: только страница истории
+SITE_DIR = ROOT / "docs"  # папка, которую публикует GitHub Pages: только страница истории
 
 API_URL = "https://backapi.rustore.ru/applicationData/overallInfo/{package}"
 PAGE_URL = "https://www.rustore.ru/catalog/app/{package}/versions"
