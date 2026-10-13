@@ -7,10 +7,10 @@
 <title>История обновлений брокерских приложений</title>
 <style>
 :root { color-scheme: light dark; --bg:#f5f6f8; --card:#fff; --fg:#1d1f23; --muted:#6b7280; --line:#e3e5e9; --accent:#2563eb; --accent-fg:#fff;
-  --ok:#15803d; --ok-bg:#dcfce7; --warn:#92400e; --warn-bg:#fef3c7; }
+  --ok:#15803d; --ok-bg:#dcfce7; --bad:#b91c1c; --bad-bg:#fee2e2; --warn:#92400e; --warn-bg:#fef3c7; }
 @media (prefers-color-scheme: dark) {
   :root { --bg:#14161a; --card:#1e2127; --fg:#e8eaed; --muted:#9aa0a9; --line:#2d3139; --accent:#6ea0ff; --accent-fg:#0b1220;
-    --ok:#86efac; --ok-bg:#14301f; --warn:#fcd34d; --warn-bg:#3a2e12; }
+    --ok:#86efac; --ok-bg:#14301f; --bad:#fca5a5; --bad-bg:#3b1a1a; --warn:#fcd34d; --warn-bg:#3a2e12; }
 }
 * { box-sizing: border-box; }
 body { margin:0; padding:16px; background:var(--bg); color:var(--fg);
@@ -43,12 +43,15 @@ select { cursor:pointer; min-width:180px; }
 .badge { font-size:12px; font-weight:600; padding:2px 9px; border-radius:999px; white-space:nowrap; }
 .badge.pending { background:var(--warn-bg); color:var(--warn); }
 .badge.checked { background:var(--ok-bg); color:var(--ok); }
+.badge.rejected { background:var(--bad-bg); color:var(--bad); }
+.card.rejected { opacity:.65; }
 .actions { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:12px; }
 .actions .link { margin:0 auto 0 0; }
 .actions { justify-content:flex-end; }
 .state { font-size:13px; color:var(--muted); }
 button.act { font:inherit; font-size:14px; padding:6px 14px; border:1px solid var(--line); border-radius:8px; cursor:pointer; }
 button.act:disabled { opacity:.5; cursor:default; }
+button.act.bad { background:var(--bad-bg); border-color:var(--bad); color:var(--bad); font-weight:600; }
 button.act.ok { background:var(--ok-bg); border-color:var(--ok); color:var(--ok); font-weight:600; }
 button.plain { font:inherit; font-size:14px; padding:6px 12px; border:1px solid var(--line); border-radius:8px;
   background:var(--card); color:var(--fg); cursor:pointer; }
@@ -90,6 +93,7 @@ mark { background:#ffe58a; color:#000; border-radius:2px; }
       <option value="">Все</option>
       <option value="checked">Проверенные</option>
       <option value="pending">Не проверенные</option>
+      <option value="rejected">Отклонённые</option>
     </select>
   </div>
   <div class="row" style="margin-bottom:0">
@@ -106,7 +110,7 @@ mark { background:#ffe58a; color:#000; border-radius:2px; }
 const RELEASES = __DATA__;
 const APPS = __APPS__;
 const NEW_VERSIONS = new Set(__UNCHECKED__);   // «пакет|версия» новых версий; у старых плашек нет
-const BADGES = { pending: "Не проверено", checked: "Проверено" };
+const BADGES = { pending: "Не проверено", checked: "Проверено", rejected: "Отклонено" };
 const $ = id => document.getElementById(id);
 const ICONS = Object.fromEntries(APPS.filter(a => a.icon).map(a => [a.package, a.icon]));
 const state = { period: "month", app: "", status: "", from: "", to: "" };
@@ -137,14 +141,20 @@ function buildAppSelect() {
 }
 
 const keyOf = r => r.package + "|" + r.version;
-// отметки «проверено» хранятся только в этом браузере; если хранилище закрыто, они живут до перезагрузки страницы
-function loadChecked() { try { return new Set(JSON.parse(localStorage.getItem("checked") || "[]")); } catch (e) { return new Set(); } }
-function saveChecked() { try { localStorage.setItem("checked", JSON.stringify([...checked])); } catch (e) {} }
-const checked = loadChecked();
-const statusOf = r => !NEW_VERSIONS.has(keyOf(r)) ? "" : checked.has(keyOf(r)) ? "checked" : "pending";
-function setChecked(r, value) {
-  value ? checked.add(keyOf(r)) : checked.delete(keyOf(r));
-  saveChecked();
+// отметки хранятся только в этом браузере («пакет|версия» → checked / rejected); если хранилище закрыто, живут до перезагрузки
+function loadMarks() {
+  try {
+    const marks = JSON.parse(localStorage.getItem("marks") || "{}");
+    for (const k of JSON.parse(localStorage.getItem("checked") || "[]")) marks[k] = marks[k] || "checked";   // прежний формат
+    return marks;
+  } catch (e) { return {}; }
+}
+function saveMarks() { try { localStorage.setItem("marks", JSON.stringify(marks)); localStorage.removeItem("checked"); } catch (e) {} }
+const marks = loadMarks();
+const statusOf = r => !NEW_VERSIONS.has(keyOf(r)) ? "" : marks[keyOf(r)] || "pending";
+function setMark(r, value) {
+  if (value) marks[keyOf(r)] = value; else delete marks[keyOf(r)];
+  saveMarks();
   render();
 }
 
@@ -192,7 +202,7 @@ function render() {
   }
   for (const r of shown) {
     const st = statusOf(r);
-    const card = el("div", "card");
+    const card = el("div", "card" + (st === "rejected" ? " rejected" : ""));
     const head = el("div", "head");
     const app = el("span", "app");
     if (ICONS[r.package]) { const img = el("img", "ico"); img.src = ICONS[r.package]; img.alt = ""; app.appendChild(img); }
@@ -207,13 +217,18 @@ function render() {
     const a = el("a", "link", "Страница в RuStore");
     a.href = "https://www.rustore.ru/catalog/app/" + encodeURIComponent(r.package) + "/versions";
     a.target = "_blank"; a.rel = "noopener";
-    if (st) {   // у новых версий есть кнопка: «Проверить» → зелёная плашка «Проверено»
+    if (st) {   // у новых версий есть кнопки: «Проверить» → «Проверено», «Отклонить» → «Отклонено»
       const actions = el("div", "actions");
-      const btn = el("button", st === "pending" ? "act ok" : "plain", st === "pending" ? "Проверить" : "Снять отметку");
-      btn.type = "button";
-      btn.addEventListener("click", () => setChecked(r, st === "pending"));
+      const button = (cls, text, mark) => {
+        const b = el("button", cls, text);
+        b.type = "button";
+        b.addEventListener("click", () => setMark(r, mark));
+        return b;
+      };
       a.style.marginTop = "0";
-      actions.append(a, btn);
+      actions.appendChild(a);
+      if (st === "pending") actions.append(button("act bad", "Отклонить", "rejected"), button("act ok", "Проверить", "checked"));
+      else actions.appendChild(button("plain", "Снять отметку", ""));
       card.appendChild(actions);
     } else {
       card.appendChild(a);
