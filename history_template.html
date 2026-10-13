@@ -49,8 +49,10 @@ mark { background:#ffe58a; color:#000; border-radius:2px; }
 <div class="panel">
   <div class="row">
     <span class="label">Период</span>
+    <button class="chip" data-period="day" type="button">День</button>
     <button class="chip" data-period="week" type="button">Неделя</button>
     <button class="chip" data-period="month" type="button">Месяц</button>
+    <button class="chip" data-period="all" type="button">Всё время</button>
     <button class="chip" data-period="custom" type="button">Свой период</button>
   </div>
   <div class="row range" id="range" hidden>
@@ -105,6 +107,8 @@ function buildAppChips() {
 }
 
 function range() {
+  if (state.period === "all") return ["0000-01-01", "9999-12-31"];
+  if (state.period === "day") return [daysAgo(1), iso(new Date())];
   if (state.period === "week") return [daysAgo(7), iso(new Date())];
   if (state.period === "month") return [daysAgo(30), iso(new Date())];
   return [state.from || "0000-01-01", state.to || "9999-12-31"];
@@ -134,7 +138,7 @@ function render() {
   const list = $("list");
   list.replaceChildren();
   $("count").textContent = "Обновлений за период: " + shown.length +
-    (state.period === "custom" ? "" : " (" + fmtDate(from) + " — " + fmtDate(to) + ")");
+    (state.period === "custom" || state.period === "all" ? "" : " (" + fmtDate(from) + " — " + fmtDate(to) + ")");
   if (!shown.length) {
     const e = el("div", "empty", "За выбранный период обновлений нет.");
     if (byApp.length) {
