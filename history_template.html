@@ -29,8 +29,10 @@ select { cursor:pointer; min-width:180px; }
 .range { display:flex; flex-wrap:wrap; gap:8px; align-items:center; color:var(--muted); font-size:13px; }
 .count { color:var(--muted); font-size:13px; margin:12px 0; }
 .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px 16px; margin-bottom:12px; }
-.head { display:flex; flex-wrap:wrap; gap:4px 12px; align-items:baseline; }
-.app { font-weight:600; }
+.head { display:flex; flex-wrap:wrap; gap:4px 12px; align-items:center; }
+.app { font-weight:600; display:inline-flex; align-items:center; gap:8px; }
+.ico { width:28px; height:28px; border-radius:7px; flex:none; object-fit:cover; }
+.ico-sel { width:24px; height:24px; border-radius:6px; }
 .ver { color:var(--accent); font-weight:600; overflow-wrap:anywhere; }
 .date { color:var(--muted); font-size:13px; margin-left:auto; }
 .notes { margin:8px 0 0; white-space:pre-wrap; overflow-wrap:anywhere; }
@@ -65,6 +67,7 @@ mark { background:#ffe58a; color:#000; border-radius:2px; }
   </div>
   <div class="row">
     <span class="label">Приложение</span>
+    <img id="appico" class="ico ico-sel" alt="" hidden>
     <select id="apps" aria-label="Приложение"></select>
   </div>
   <div class="row" style="margin-bottom:0">
@@ -80,6 +83,7 @@ mark { background:#ffe58a; color:#000; border-radius:2px; }
 const RELEASES = __DATA__;
 const APPS = __APPS__;
 const $ = id => document.getElementById(id);
+const ICONS = Object.fromEntries(APPS.filter(a => a.icon).map(a => [a.package, a.icon]));
 const state = { period: "month", app: "", from: "", to: "" };
 
 function iso(d) {
@@ -104,7 +108,7 @@ function buildAppSelect() {
     o.value = value;
     box.appendChild(o);
   }
-  box.addEventListener("change", () => { state.app = box.value; render(); });
+  box.addEventListener("change", () => { state.app = box.value; sync(); });
 }
 
 function range() {
@@ -152,7 +156,10 @@ function render() {
   for (const r of shown) {
     const card = el("div", "card");
     const head = el("div", "head");
-    head.append(el("span", "app", r.name), el("span", "ver", r.version), el("span", "date", fmtDate(r.date)));
+    const app = el("span", "app");
+    if (ICONS[r.package]) { const img = el("img", "ico"); img.src = ICONS[r.package]; img.alt = ""; app.appendChild(img); }
+    app.append(r.name);
+    head.append(app, el("span", "ver", r.version), el("span", "date", fmtDate(r.date)));
     card.appendChild(head);
     const notes = el("p", r.whats_new ? "notes" : "notes none");
     if (r.whats_new) highlight(notes, r.whats_new, needle); else notes.textContent = "Описание не указано.";
@@ -168,6 +175,8 @@ function render() {
 function sync() {
   $("period").value = state.period;
   $("apps").value = state.app;
+  $("appico").hidden = !ICONS[state.app];
+  if (ICONS[state.app]) $("appico").src = ICONS[state.app];
   $("range").hidden = state.period !== "custom";
   render();
 }

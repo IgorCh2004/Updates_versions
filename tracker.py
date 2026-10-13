@@ -15,6 +15,7 @@
 """
 
 import argparse
+import base64
 import csv
 import html
 import json
@@ -35,6 +36,7 @@ CONFIG_FILE = ROOT / "config.json"
 STATE_FILE = ROOT / "state.json"
 CSV_FILE = ROOT / "releases.csv"
 HISTORY_FILE = ROOT / "history.html"
+ICONS_DIR = ROOT / "icons"
 
 API_URL = "https://backapi.rustore.ru/applicationData/overallInfo/{package}"
 PAGE_URL = "https://www.rustore.ru/catalog/app/{package}/versions"
@@ -202,6 +204,10 @@ def read_releases():
 def build_history():
     """Пересобирает history.html — один самодостаточный файл без внешних зависимостей."""
     apps = load_json(CONFIG_FILE, {}).get("apps", [])
+    for app in apps:  # иконки из icons/ вшиваются в страницу, чтобы она оставалась одним файлом
+        icon = ICONS_DIR / f"{app['package']}.webp"
+        if icon.exists():
+            app["icon"] = "data:image/webp;base64," + base64.b64encode(icon.read_bytes()).decode()
     packages = {a["package"] for a in apps}
     # на странице только приложения из config.json (бывшие, например ВТБ, остаются в CSV, но скрыты)
     releases = [r for r in read_releases() if r["package"] in packages]
