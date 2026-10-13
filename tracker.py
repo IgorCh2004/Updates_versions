@@ -37,6 +37,7 @@ STATE_FILE = ROOT / "state.json"
 CSV_FILE = ROOT / "releases.csv"
 HISTORY_FILE = ROOT / "history.html"
 ICONS_DIR = ROOT / "icons"
+SITE_DIR = ROOT / "site"  # то, что публикует Cloudflare: только страница истории
 
 API_URL = "https://backapi.rustore.ru/applicationData/overallInfo/{package}"
 PAGE_URL = "https://www.rustore.ru/catalog/app/{package}/versions"
@@ -215,10 +216,10 @@ def build_history():
     apps_json = json.dumps(apps, ensure_ascii=False).replace("</", "<\\/")
     updated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     template = HISTORY_TEMPLATE_FILE.read_text(encoding="utf-8")
-    HISTORY_FILE.write_text(
-        template.replace("__UPDATED__", updated).replace("__DATA__", data).replace("__APPS__", apps_json),
-        encoding="utf-8",
-    )
+    page = template.replace("__UPDATED__", updated).replace("__DATA__", data).replace("__APPS__", apps_json)
+    HISTORY_FILE.write_text(page, encoding="utf-8")
+    SITE_DIR.mkdir(exist_ok=True)
+    (SITE_DIR / "index.html").write_text(page, encoding="utf-8")
     print(f"Страница истории обновлена: {HISTORY_FILE.name} (релизов: {len(releases)})")
 
 
