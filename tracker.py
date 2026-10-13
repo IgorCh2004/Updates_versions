@@ -3,8 +3,12 @@
 Раз в день проверяет приложения из config.json. Если вышла новая версия,
 отправляет одно письмо-сводку и дописывает строку в releases.csv.
 
+Новые версии сначала попадают на страницу проверки (review.html) и в историю идут только
+после подтверждения; решения записываются в decisions.json.
+
 Запуск:
     python tracker.py               обычная проверка
+    python tracker.py --apply-decisions   применить решения из decisions.json
     python tracker.py --dry-run     показать письмо в консоли, ничего не слать и не сохранять
     python tracker.py --test-email  отправить тестовое сообщение с текущими версиями
     python tracker.py --debug       напечатать сырой ответ RuStore (для отладки)
@@ -37,6 +41,11 @@ STATE_FILE = ROOT / "state.json"
 CSV_FILE = ROOT / "releases.csv"
 HISTORY_FILE = ROOT / "history.html"
 ICONS_DIR = ROOT / "icons"
+PENDING_FILE = ROOT / "pending.json"        # обновления, ждущие проверки
+REJECTED_FILE = ROOT / "rejected.json"      # отклонённые
+DECISIONS_FILE = ROOT / "decisions.json"    # решения; их записывает страница review.html
+REVIEW_TEMPLATE_FILE = ROOT / "review_template.html"
+REVIEW_LABEL = "НА ПРОВЕРКЕ"
 SITE_DIR = ROOT / "docs"  # папка, которую публикует GitHub Pages: только страница истории
 
 API_URL = "https://backapi.rustore.ru/applicationData/overallInfo/{package}"
@@ -164,6 +173,10 @@ def save_state(state):
     )
 
 
+def save_json(path, data):
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
 def append_csv(rows):
     is_new = not CSV_FILE.exists()
     # utf-8-sig, чтобы Excel правильно показывал кириллицу
@@ -202,13 +215,60 @@ def read_releases():
     return releases
 
 
-def build_history():
-    """Пересобирает history.html — один самодостаточный файл без внешних зависимостей."""
+def apps_with_icons():
+    """Приложения из config.json; иконки из icons/ вшиваются в страницу, чтобы она оставалась одним файлом."""
     apps = load_json(CONFIG_FILE, {}).get("apps", [])
-    for app in apps:  # иконки из icons/ вшиваются в страницу, чтобы она оставалась одним файлом
+    for app in apps:
         icon = ICONS_DIR / f"{app['package']}.webp"
         if icon.exists():
             app["icon"] = "data:image/webp;base64," + base64.b64encode(icon.read_bytes()).decode()
+    return apps
+
+
+def review_keys():
+    """Версии, уже стоящие на проверке или отклонённые: заново в историю их не добавляем."""
+    return {(r["package"], r["version"]) for r in load_json(PENDING_FILE, []) + load_json(REJECTED_FILE, [])}
+
+
+def add_pending(releases, today):
+    pending = load_json(PENDING_FILE, [])
+    seen = {(r["package"], r["version"]) for r in pending}
+    for r in releases:
+        if (r["package"], r["version"]) not in seen:
+            pending.append({
+                "checked": today, "name": r["name"], "package": r["package"],
+                "version": r["version"], "date": r["date"], "whats_new": r["whats_new"],
+            })
+    save_json(PENDING_FILE, pending)
+
+
+def build_review(pending=None, rejected=None, out=None):
+    """Страница review.html: обновления на проверке с кнопками «Подтвердить» / «Отклонить»."""
+    apps = apps_with_icons()
+    packages = {a["package"] for a in apps}
+    pending = [r for r in (load_json(PENDING_FILE, []) if pending is None else pending) if r["package"] in packages]
+    rejected = [r for r in (load_json(REJECTED_FILE, []) if rejected is None else rejected) if r["package"] in packages]
+
+    def dump(obj):
+        return json.dumps(obj, ensure_ascii=False).replace("</", "<\\/")
+
+    page = (
+        REVIEW_TEMPLATE_FILE.read_text(encoding="utf-8")
+        .replace("__UPDATED__", datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"))
+        .replace("__PENDING__", dump(pending))
+        .replace("__REJECTED__", dump(rejected))
+        .replace("__APPS__", dump(apps))
+        .replace("__REPO__", os.environ.get("GITHUB_REPOSITORY", "IgorCh2004/Updates_versions"))
+    )
+    target = out or SITE_DIR / "review.html"
+    target.parent.mkdir(exist_ok=True)
+    target.write_text(page, encoding="utf-8")
+    print(f"Страница проверки обновлена: {target.name} (на проверке: {len(pending)}, отклонено: {len(rejected)})")
+
+
+def build_history():
+    """Пересобирает history.html — один самодостаточный файл без внешних зависимостей."""
+    apps = apps_with_icons()
     packages = {a["package"] for a in apps}
     # на странице только приложения из config.json (бывшие, например ВТБ, остаются в CSV, но скрыты)
     releases = [r for r in read_releases() if r["package"] in packages]
@@ -220,6 +280,7 @@ def build_history():
     HISTORY_FILE.write_text(page, encoding="utf-8")
     SITE_DIR.mkdir(exist_ok=True)
     (SITE_DIR / "index.html").write_text(page, encoding="utf-8")
+    build_review()
     print(f"Страница истории обновлена: {HISTORY_FILE.name} (релизов: {len(releases)})")
 
 
@@ -230,11 +291,15 @@ def history_url():
     return os.environ.get("HISTORY_URL", "").strip()
 
 
-def build_email(releases, errors, test=False, unchanged=()):
+def review_url():
+    """Ссылка на страницу проверки (рядом со страницей истории)."""
+    return history_url().rstrip("/") + "/review.html" if history_url() else ""
+
+
+def build_email(releases, errors, test=False, unchanged=(), label=""):
     short = ", ".join(f"{r['name']} {r['version']}" for r in releases)
-    subject = ("[ТЕСТ] " if test else "") + (
-        f"RuStore: новые версии — {short}" if releases else "RuStore: обновлений нет"
-    )
+    heading = f"RuStore [{label}]: {short}" if label else f"RuStore: новые версии — {short}"
+    subject = ("[ТЕСТ] " if test else "") + (heading if releases else "RuStore: обновлений нет")
 
     text_parts, html_parts = [], []
     for r in releases:
@@ -263,6 +328,11 @@ def build_email(releases, errors, test=False, unchanged=()):
             "<p style='margin:24px 0 4px;color:#666'>"
             + "<br>".join(f"{html.escape(name)} — обновлений нет" for name in unchanged)
             + "</p>"
+        )
+    if label == REVIEW_LABEL and review_url():
+        text_parts.append(f"Проверить и подтвердить: {review_url()}")
+        html_parts.append(
+            f"<p style='margin:24px 0 0'><a href='{html.escape(review_url())}'>Проверить и подтвердить</a></p>"
         )
     if history_url():
         text_parts.append(f"История обновлений: {history_url()}")
@@ -305,19 +375,21 @@ def send_email(message):
     print(f"Письмо отправлено: {', '.join(recipients)}")
 
 
-def send_telegram(releases, errors, test=False, unchanged=()):
+def send_telegram(releases, errors, test=False, unchanged=(), label=""):
     token = os.environ["TELEGRAM_BOT_TOKEN"]
     chat_ids = [c.strip() for c in os.environ["TELEGRAM_CHAT_ID"].split(",") if c.strip()]
     # в каждом сообщении — ссылка на страницу истории
     footer = f"\n\nИстория обновлений: {history_url()}" if history_url() else ""
+    review = f"\n\nПроверить и подтвердить: {review_url()}" if label == REVIEW_LABEL and review_url() else ""
+    tag = ("[ТЕСТ] " if test else "") + (f"[{label}] " if label else "")
     messages = []
     for r in releases:
         text = (
-            ("[ТЕСТ] " if test else "")
+            tag
             + f"{r['name']} — версия {r['version']} ({r['date'] or 'дата не указана'})\n\n"
             + (r["whats_new"] or "Описание не указано.")
         )
-        link = "\n\n" + PAGE_URL.format(package=r["package"]) + footer
+        link = "\n\n" + PAGE_URL.format(package=r["package"]) + review + footer
         messages.append(text[: 4000 - len(link)] + link)  # лимит Telegram — 4096 символов
     if unchanged:
         text = ("[ТЕСТ] " if test else "") + "\n".join(f"{name} — обновлений нет" for name in unchanged)
@@ -347,21 +419,44 @@ def has_channel():
     return bool(os.environ.get("TELEGRAM_BOT_TOKEN") or os.environ.get("SMTP_HOST"))
 
 
-def notify(releases, errors, test=False, unchanged=()):
+def notify(releases, errors, test=False, unchanged=(), label=""):
     """Telegram, если задан токен бота; иначе почта."""
     if os.environ.get("TELEGRAM_BOT_TOKEN"):
-        send_telegram(releases, errors, test, unchanged)
+        send_telegram(releases, errors, test, unchanged, label)
     elif os.environ.get("SMTP_HOST"):
-        send_email(build_email(releases, errors, test, unchanged))
+        send_email(build_email(releases, errors, test, unchanged, label))
     else:
         sys.exit("Не заданы ни TELEGRAM_BOT_TOKEN, ни SMTP_HOST — некуда отправлять")
+
+
+# ---------- проверка обновлений ----------
+
+def apply_decisions(dry_run=False):
+    """Переносит решения из decisions.json: подтверждённое — в историю, отклонённое — в rejected.json."""
+    pending = load_json(PENDING_FILE, [])
+    decisions = load_json(DECISIONS_FILE, {})
+    approved, rejected, waiting = [], [], []
+    for r in pending:
+        decision = decisions.get(f"{r['package']}|{r['version']}")
+        {"approved": approved, "rejected": rejected}.get(decision, waiting).append(r)
+    print(f"Проверка: подтверждено {len(approved)}, отклонено {len(rejected)}, ждут решения {len(waiting)}")
+    if dry_run or not (approved or rejected):
+        return
+    if approved and has_channel():
+        notify(approved, [], label="ПОДТВЕРЖДЕНО")
+    # дальше — только если сообщение ушло без ошибки
+    if approved:
+        append_csv([[r["checked"], r["name"], r["package"], r["version"], r["date"], r["whats_new"]] for r in approved])
+    if rejected:
+        save_json(REJECTED_FILE, load_json(REJECTED_FILE, []) + rejected)
+    save_json(PENDING_FILE, waiting)
 
 
 # ---------- заполнение истории ----------
 
 def backfill(apps, state, today, dry_run=False):
     """Один раз дописывает в releases.csv прошлые версии со страницы /versions."""
-    known = {(r["package"], r["version"]) for r in read_releases()}
+    known = {(r["package"], r["version"]) for r in read_releases()} | review_keys()
     rows = []
     for i, app in enumerate(apps):
         if i:
@@ -396,9 +491,16 @@ def main():
     parser.add_argument("--dry-run", action="store_true", help="ничего не отправлять и не сохранять")
     parser.add_argument("--test-email", action="store_true", help="отправить тестовое письмо с текущими версиями")
     parser.add_argument("--debug", action="store_true", help="печатать сырой ответ RuStore")
+    parser.add_argument("--apply-decisions", action="store_true", help="применить решения из decisions.json и пересобрать страницы")
     parser.add_argument("--backfill", action="store_true", help="один раз заполнить историю прошлыми версиями со страницы RuStore")
     args = parser.parse_args()
     DEBUG = args.debug
+
+    if args.apply_decisions:
+        apply_decisions(dry_run=args.dry_run)
+        if not args.dry_run:
+            build_history()
+        return
 
     apps = load_json(CONFIG_FILE, {}).get("apps", [])
     if not apps:
@@ -410,6 +512,9 @@ def main():
     if args.backfill:
         backfill(apps, state, today, dry_run=args.dry_run)
         return
+
+    if not (args.dry_run or args.test_email):
+        apply_decisions()  # решения, принятые с прошлой проверки
 
     current, errors = [], []
     for i, app in enumerate(apps):
@@ -443,13 +548,13 @@ def main():
     if not new:
         print("Новых версий нет.")
     if args.dry_run:
-        message = build_email(new, errors, unchanged=unchanged)
+        message = build_email(new, errors, unchanged=unchanged, label=REVIEW_LABEL if new else "")
         print("\n--- ПИСЬМО (dry-run) ---")
         print("Тема:", message["Subject"])
         print(message.get_body(preferencelist=("plain",)).get_content())
     elif new or has_channel():
-        # каждый день — сводка: новые версии и «обновлений нет» по остальным
-        notify(new, errors, unchanged=unchanged)
+        # каждый день — сводка: новые версии (на проверку) и «обновлений нет» по остальным
+        notify(new, errors, unchanged=unchanged, label=REVIEW_LABEL if new else "")
 
     if args.dry_run:
         return
@@ -458,9 +563,10 @@ def main():
     for r in baseline + new:
         state[r["package"]] = r["version"]
     save_state(state)
-    append_csv(
-        [[today, r["name"], r["package"], r["version"], r["date"], r["whats_new"]] for r in baseline + new]
-    )
+    # первая запись приложения — не новость, сразу в историю; новые версии сначала идут на проверку
+    if baseline:
+        append_csv([[today, r["name"], r["package"], r["version"], r["date"], r["whats_new"]] for r in baseline])
+    add_pending(new, today)
     build_history()
 
 

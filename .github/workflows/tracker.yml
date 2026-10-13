@@ -3,6 +3,10 @@ name: RuStore tracker
 on:
   schedule:
     - cron: "59 20 * * *"   # каждый день в 20:59 UTC = 23:59 МСК (GitHub может запустить с опозданием)
+  # решение с вкладки проверки записывается в decisions.json — сразу применяем его
+  push:
+    branches: [main]
+    paths: [decisions.json]
   workflow_dispatch:
     inputs:
       mode:
@@ -43,37 +47,18 @@ jobs:
           MAIL_TO: ${{ secrets.MAIL_TO }}
           HISTORY_URL: ${{ vars.HISTORY_URL }}
           MODE: ${{ inputs.mode }}
+          EVENT: ${{ github.event_name }}
         run: |
           case "$MODE" in
             test-email) python tracker.py --test-email ;;
             debug)      python tracker.py --dry-run --debug ;;
             backfill)   python tracker.py --backfill ;;
-            *)          python tracker.py ;;
+            *)          if [ "$EVENT" = "push" ]; then python tracker.py --apply-decisions; else python tracker.py; fi ;;
           esac
 
       - name: Save state
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -A state.json releases.csv history.html docs 2>/dev/null || true
-          git diff --cached --quiet || (git commit -m "Update tracked versions" && git push)
-
-      # Страница истории выкладывается в отдельный публичный репозиторий с GitHub Pages.
-      # Нужны: переменная HISTORY_REPO (владелец/репозиторий) и секрет HISTORY_REPO_TOKEN.
-      - name: Publish history page
-        if: inputs.mode != 'debug' && inputs.mode != 'test-email'
-        env:
-          HISTORY_REPO: ${{ vars.HISTORY_REPO }}
-          HISTORY_REPO_TOKEN: ${{ secrets.HISTORY_REPO_TOKEN }}
-        run: |
-          if [ -z "$HISTORY_REPO" ] || [ -z "$HISTORY_REPO_TOKEN" ]; then
-            echo "HISTORY_REPO / HISTORY_REPO_TOKEN не заданы — публикация страницы пропущена"
-            exit 0
-          fi
-          git clone --depth 1 "https://x-access-token:${HISTORY_REPO_TOKEN}@github.com/${HISTORY_REPO}.git" pages
-          cp history.html pages/index.html
-          cd pages
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add index.html
-          git diff --cached --quiet || (git commit -m "Update history page" && git push)
+          git add -A state.json releases.csv history.html docs pending.json rejected.json 2>/dev/null || true
+          git diff --cached --quiet || (git commit -m "Update tracked versions" && git pull --rebase -q && git push)

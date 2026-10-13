@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Проверка обновлений</title>
+<style>
+:root { --bg:#f5f6f8; --card:#fff; --fg:#1d1f23; --muted:#6b7280; --line:#e3e5e9; --accent:#2563eb; --accent-fg:#fff;
+  --ok:#15803d; --ok-bg:#dcfce7; --bad:#b91c1c; --bad-bg:#fee2e2; --warn-bg:#fef3c7; --warn:#92400e; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --bg:#14161a; --card:#1e2127; --fg:#e8eaed; --muted:#9aa0a9; --line:#2d3139; --accent:#6ea0ff; --accent-fg:#0b1220;
+    --ok:#86efac; --ok-bg:#14301f; --bad:#fca5a5; --bad-bg:#3b1a1a; --warn-bg:#3a2e12; --warn:#fcd34d; color-scheme: dark; }
+}
+:root[data-theme="dark"] { --bg:#14161a; --card:#1e2127; --fg:#e8eaed; --muted:#9aa0a9; --line:#2d3139; --accent:#6ea0ff; --accent-fg:#0b1220;
+  --ok:#86efac; --ok-bg:#14301f; --bad:#fca5a5; --bad-bg:#3b1a1a; --warn-bg:#3a2e12; --warn:#fcd34d; color-scheme: dark; }
+* { box-sizing: border-box; }
+body { margin:0; padding-block:16px; padding-inline:16px; background:var(--bg); color:var(--fg);
+  font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif; }
+main { max-width:860px; margin:0 auto; }
+h1 { font-size:22px; margin:8px 0 4px; }
+h2 { font-size:17px; margin:24px 0 10px; }
+.sub { color:var(--muted); margin:0 0 12px; font-size:13px; }
+.sub a { color:var(--accent); }
+details.token { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:10px 14px; margin:12px 0; }
+details.token summary { cursor:pointer; font-weight:600; }
+details.token p { margin:8px 0; color:var(--muted); font-size:13px; }
+.row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+input[type=password] { font:inherit; padding:6px 10px; border:1px solid var(--line); border-radius:8px;
+  background:var(--card); color:var(--fg); flex:1 1 260px; min-width:0; }
+button { font:inherit; font-size:14px; padding:7px 14px; border:1px solid var(--line); border-radius:8px;
+  background:var(--card); color:var(--fg); cursor:pointer; }
+button:disabled { opacity:.5; cursor:default; }
+button.ok { background:var(--ok-bg); border-color:var(--ok); color:var(--ok); font-weight:600; }
+button.bad { background:var(--bad-bg); border-color:var(--bad); color:var(--bad); font-weight:600; }
+.card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px 16px; margin-bottom:12px; }
+.head { display:flex; flex-wrap:wrap; gap:4px 12px; align-items:center; }
+.app { font-weight:600; display:inline-flex; align-items:center; gap:8px; }
+.ico { width:28px; height:28px; border-radius:7px; flex:none; object-fit:cover; }
+.ver { color:var(--accent); font-weight:600; overflow-wrap:anywhere; }
+.date { color:var(--muted); font-size:13px; margin-left:auto; }
+.notes { margin:8px 0 0; white-space:pre-wrap; overflow-wrap:anywhere; }
+.none { color:var(--muted); font-style:italic; }
+.actions { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:12px; }
+.link { font-size:13px; color:var(--accent); margin-right:auto; }
+.state { font-size:13px; color:var(--muted); }
+.msg { margin:10px 0; padding:8px 12px; border-radius:8px; font-size:14px; background:var(--warn-bg); color:var(--warn); }
+.msg[hidden] { display:none; }
+.empty { text-align:center; color:var(--muted); padding:32px 0; }
+.muted-card { opacity:.75; }
+[hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<main>
+<h1>Проверка обновлений</h1>
+<p class="sub">Новые версии из RuStore попадают в общую историю только после подтверждения. Обновлено: __UPDATED__.</p>
+
+<details class="token" id="tokenBox">
+  <summary>Доступ для подтверждения</summary>
+  <p>Чтобы подтверждать и отклонять, нужен GitHub-токен с правом записи в репозиторий (fine-grained, Contents: Read and write, только для репозитория __REPO__). Он хранится только в этом браузере.</p>
+  <div class="row">
+    <input type="password" id="token" placeholder="github_pat_..." autocomplete="off" aria-label="GitHub-токен">
+    <button type="button" id="saveToken">Сохранить</button>
+    <button type="button" id="clearToken">Удалить</button>
+  </div>
+  <p id="tokenState"></p>
+</details>
+
+<div class="msg" id="msg" hidden></div>
+
+<h2 id="pendingTitle"></h2>
+<div id="pending"></div>
+
+<details id="rejectedBox" hidden>
+  <summary id="rejectedTitle"></summary>
+  <div id="rejected" style="margin-top:12px"></div>
+</details>
+</main>
+<script>
+const PENDING = __PENDING__;
+const REJECTED = __REJECTED__;
+const APPS = __APPS__;
+const REPO = "__REPO__";
+const BRANCH = "main";
+const ICONS = Object.fromEntries(APPS.filter(a => a.icon).map(a => [a.package, a.icon]));
+const $ = id => document.getElementById(id);
+const key = r => r.package + "|" + r.version;
+const sent = new Set();   // решения, уже записанные в репозиторий (страница обновится после пересборки)
+
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+function fmtDate(s) { return s ? s.split("-").reverse().join(".") : "дата не указана"; }
+function showMsg(text) { $("msg").textContent = text; $("msg").hidden = !text; }
+
+// токен хранится только в браузере; доступ к хранилищу может быть закрыт — страница должна работать и без него
+function getToken() { try { return localStorage.getItem("gh_token") || ""; } catch (e) { return ""; } }
+function setToken(v) { try { v ? localStorage.setItem("gh_token", v) : localStorage.removeItem("gh_token"); } catch (e) {} }
+function refreshTokenState() {
+  $("tokenState").textContent = getToken() ? "Токен сохранён в этом браузере." : "Токена нет: смотреть можно, подтверждать нельзя.";
+}
+
+function b64decode(s) {
+  const bin = atob(s.replace(/\s/g, ""));
+  return new TextDecoder().decode(Uint8Array.from(bin, c => c.charCodeAt(0)));
+}
+function b64encode(s) {
+  let bin = "";
+  for (const b of new TextEncoder().encode(s)) bin += String.fromCharCode(b);
+  return btoa(bin);
+}
+
+// решение дописывается в decisions.json; GitHub-workflow сам перенесёт его в историю
+async function writeDecision(release, value) {
+  const token = getToken();
+  if (!token) throw new Error("Сначала сохраните GitHub-токен (блок «Доступ для подтверждения»).");
+  const url = "https://api.github.com/repos/" + REPO + "/contents/decisions.json";
+  const headers = { Authorization: "Bearer " + token, Accept: "application/vnd.github+json" };
+  for (let attempt = 0; attempt < 3; attempt++) {
+    let sha, data = {};
+    const get = await fetch(url + "?ref=" + BRANCH, { headers, cache: "no-store" });
+    if (get.status === 200) {
+      const j = await get.json();
+      sha = j.sha;
+      data = JSON.parse(b64decode(j.content) || "{}");
+    } else if (get.status === 401 || get.status === 403) {
+      throw new Error("GitHub не принял токен. Проверьте, что у него есть право Contents: Read and write.");
+    } else if (get.status !== 404) {
+      throw new Error("GitHub ответил " + get.status + " при чтении решений.");
+    }
+    data[key(release)] = value;
+    const body = {
+      message: (value === "approved" ? "Подтверждено: " : "Отклонено: ") + release.name + " " + release.version,
+      content: b64encode(JSON.stringify(data, null, 2) + "\n"),
+      branch: BRANCH,
+    };
+    if (sha) body.sha = sha;
+    const put = await fetch(url, { method: "PUT", headers, body: JSON.stringify(body) });
+    if (put.ok) return;
+    if (put.status === 409 || put.status === 422) continue;   // файл изменили параллельно — читаем заново
+    if (put.status === 401 || put.status === 403 || put.status === 404)
+      throw new Error("Нет прав на запись в " + REPO + ". Проверьте токен.");
+    throw new Error("GitHub ответил " + put.status + " при записи решения.");
+  }
+  throw new Error("Не удалось записать решение: файл решений часто меняется. Попробуйте ещё раз.");
+}
+
+function card(r, extra) {
+  const c = el("div", "card" + (extra ? " muted-card" : ""));
+  const head = el("div", "head");
+  const app = el("span", "app");
+  if (ICONS[r.package]) { const img = el("img", "ico"); img.src = ICONS[r.package]; img.alt = ""; app.appendChild(img); }
+  app.append(r.name);
+  head.append(app, el("span", "ver", r.version), el("span", "date", "релиз " + fmtDate(r.date)));
+  c.appendChild(head);
+  c.appendChild(el("p", r.whats_new ? "notes" : "notes none", r.whats_new || "Описание не указано."));
+  return c;
+}
+
+function renderPending() {
+  $("pendingTitle").textContent = "Ожидают проверки: " + PENDING.length;
+  const box = $("pending");
+  box.replaceChildren();
+  if (!PENDING.length) { box.appendChild(el("div", "empty", "Сейчас нечего проверять.")); return; }
+  for (const r of PENDING) {
+    const c = card(r);
+    const actions = el("div", "actions");
+    const a = el("a", "link", "Проверить на RuStore");
+    a.href = "https://www.rustore.ru/catalog/app/" + encodeURIComponent(r.package) + "/versions";
+    a.target = "_blank"; a.rel = "noopener";
+    const state = el("span", "state", "Найдено " + fmtDate(r.checked));
+    const ok = el("button", "ok", "Подтвердить"); ok.type = "button";
+    const bad = el("button", "bad", "Отклонить"); bad.type = "button";
+    const done = () => { ok.disabled = bad.disabled = true; };
+    if (sent.has(key(r))) { done(); state.textContent = "Решение отправлено, страница обновится через пару минут."; }
+    for (const [btn, value, text] of [[ok, "approved", "Подтверждено"], [bad, "rejected", "Отклонено"]]) {
+      btn.addEventListener("click", async () => {
+        showMsg("");
+        done(); state.textContent = "Записываю…";
+        try {
+          await writeDecision(r, value);
+          sent.add(key(r));
+          state.textContent = text + ". Страница обновится через пару минут.";
+        } catch (e) {
+          ok.disabled = bad.disabled = false;
+          state.textContent = "Не записано";
+          showMsg(e.message || String(e));
+        }
+      });
+    }
+    actions.append(a, state, bad, ok);
+    c.appendChild(actions);
+    box.appendChild(c);
+  }
+}
+
+function renderRejected() {
+  $("rejectedBox").hidden = !REJECTED.length;
+  $("rejectedTitle").textContent = "Отклонённые: " + REJECTED.length;
+  const box = $("rejected");
+  box.replaceChildren();
+  for (const r of [...REJECTED].reverse()) box.appendChild(card(r, true));
+}
+
+// уже принятые, но ещё не применённые решения (между кликом и пересборкой страницы)
+async function loadDecisions() {
+  try {
+    const r = await fetch("https://api.github.com/repos/" + REPO + "/contents/decisions.json?ref=" + BRANCH,
+      { headers: { Accept: "application/vnd.github+json" }, cache: "no-store" });
+    if (!r.ok) return;
+    const data = JSON.parse(b64decode((await r.json()).content) || "{}");
+    for (const p of PENDING) if (data[key(p)]) sent.add(key(p));
+    renderPending();
+  } catch (e) {}
+}
+
+$("saveToken").addEventListener("click", () => { setToken($("token").value.trim()); $("token").value = ""; refreshTokenState(); });
+$("clearToken").addEventListener("click", () => { setToken(""); refreshTokenState(); });
+if (!getToken()) $("tokenBox").open = true;
+refreshTokenState();
+renderPending();
+renderRejected();
+loadDecisions();
+</script>
+</body>
+</html>
