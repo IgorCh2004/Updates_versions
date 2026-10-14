@@ -102,6 +102,7 @@ mark { background:#ffe58a; color:#000; border-radius:2px; }
   </div>
 </div>
 
+<div class="count" id="syncerr" hidden style="color:var(--bad)">Не удалось загрузить общие отметки — показаны без них. Обновите страницу.</div>
 <div class="count" id="count"></div>
 <div id="list"></div>
 
@@ -141,21 +142,41 @@ function buildAppSelect() {
 }
 
 const keyOf = r => r.package + "|" + r.version;
-// отметки хранятся только в этом браузере («пакет|версия» → checked / rejected); если хранилище закрыто, живут до перезагрузки
-function loadMarks() {
+// отметки общие для всей команды: хранятся в Cloudflare Worker («пакет|версия» → {status, by, at})
+const API = "https://quiet-mountain-285d.igorek-rgbdg.workers.dev";
+let marks = {};
+const markOf = r => marks[keyOf(r)] || null;
+const statusOf = r => !NEW_VERSIONS.has(keyOf(r)) ? "" : (markOf(r) || {}).status || "pending";
+function reviewer() {
   try {
-    const marks = JSON.parse(localStorage.getItem("marks") || "{}");
-    for (const k of JSON.parse(localStorage.getItem("checked") || "[]")) marks[k] = marks[k] || "checked";   // прежний формат
-    return marks;
-  } catch (e) { return {}; }
+    let name = localStorage.getItem("reviewer");
+    if (!name) { name = (prompt("Ваше имя (будет видно рядом с отметкой):") || "").trim(); if (name) localStorage.setItem("reviewer", name); }
+    return name;
+  } catch (e) { return (prompt("Ваше имя (будет видно рядом с отметкой):") || "").trim(); }
 }
-function saveMarks() { try { localStorage.setItem("marks", JSON.stringify(marks)); localStorage.removeItem("checked"); } catch (e) {} }
-const marks = loadMarks();
-const statusOf = r => !NEW_VERSIONS.has(keyOf(r)) ? "" : marks[keyOf(r)] || "pending";
-function setMark(r, value) {
-  if (value) marks[keyOf(r)] = value; else delete marks[keyOf(r)];
-  saveMarks();
+async function loadMarks() {
+  try {
+    const res = await fetch(API);
+    if (!res.ok) throw new Error(res.status);
+    marks = await res.json();
+    $("syncerr").hidden = true;
+  } catch (e) { $("syncerr").hidden = false; }
   render();
+}
+async function setMark(r, value) {
+  const by = value ? reviewer() : "";
+  if (value && !by) return;   // без имени не отмечаем
+  const key = keyOf(r), before = marks[key];
+  if (value) marks[key] = { status: value, by, at: new Date().toISOString() }; else delete marks[key];
+  render();
+  try {
+    const res = await fetch(API, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key, status: value, by }) });
+    if (!res.ok) throw new Error(res.status);
+  } catch (e) {
+    if (before) marks[key] = before; else delete marks[key];
+    render();
+    alert("Не удалось сохранить отметку. Проверьте интернет и попробуйте ещё раз.");
+  }
 }
 
 function range() {
@@ -209,6 +230,8 @@ function render() {
     app.append(r.name);
     head.append(app, el("span", "ver", r.version));
     if (BADGES[st]) head.appendChild(el("span", "badge " + st, BADGES[st]));
+    const m = markOf(r);
+    if (st && m && m.by) head.appendChild(el("span", "state", m.by + ", " + fmtDate(m.at.slice(0, 10))));
     head.appendChild(el("span", "date", fmtDate(r.date)));
     card.appendChild(head);
     const notes = el("p", r.whats_new ? "notes" : "notes none");
@@ -262,6 +285,7 @@ $("status").addEventListener("change", e => { state.status = e.target.value; ren
 
 buildAppSelect();
 sync();
+loadMarks();
 </script>
 </body>
 </html>
