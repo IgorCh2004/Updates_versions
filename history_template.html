@@ -142,18 +142,11 @@ function buildAppSelect() {
 }
 
 const keyOf = r => r.package + "|" + r.version;
-// отметки общие для всей команды: хранятся в Cloudflare Worker («пакет|версия» → {status, by, at})
+// отметки общие для всей команды: хранятся в Cloudflare Worker («пакет|версия» → {status, at})
 const API = "https://quiet-mountain-285d.igorek-rgbdg.workers.dev";
 let marks = {};
 const markOf = r => marks[keyOf(r)] || null;
 const statusOf = r => !NEW_VERSIONS.has(keyOf(r)) ? "" : (markOf(r) || {}).status || "pending";
-function reviewer() {
-  try {
-    let name = localStorage.getItem("reviewer");
-    if (!name) { name = (prompt("Ваше имя (будет видно рядом с отметкой):") || "").trim(); if (name) localStorage.setItem("reviewer", name); }
-    return name;
-  } catch (e) { return (prompt("Ваше имя (будет видно рядом с отметкой):") || "").trim(); }
-}
 async function loadMarks() {
   try {
     const res = await fetch(API);
@@ -164,13 +157,11 @@ async function loadMarks() {
   render();
 }
 async function setMark(r, value) {
-  const by = value ? reviewer() : "";
-  if (value && !by) return;   // без имени не отмечаем
   const key = keyOf(r), before = marks[key];
-  if (value) marks[key] = { status: value, by, at: new Date().toISOString() }; else delete marks[key];
+  if (value) marks[key] = { status: value, at: new Date().toISOString() }; else delete marks[key];
   render();
   try {
-    const res = await fetch(API, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key, status: value, by }) });
+    const res = await fetch(API, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key, status: value }) });
     if (!res.ok) throw new Error(res.status);
   } catch (e) {
     if (before) marks[key] = before; else delete marks[key];
@@ -231,7 +222,7 @@ function render() {
     head.append(app, el("span", "ver", r.version));
     if (BADGES[st]) head.appendChild(el("span", "badge " + st, BADGES[st]));
     const m = markOf(r);
-    if (st && m && m.by) head.appendChild(el("span", "state", m.by + ", " + fmtDate(m.at.slice(0, 10))));
+    if (st && m && m.at) head.appendChild(el("span", "state", fmtDate(m.at.slice(0, 10))));
     head.appendChild(el("span", "date", fmtDate(r.date)));
     card.appendChild(head);
     const notes = el("p", r.whats_new ? "notes" : "notes none");
