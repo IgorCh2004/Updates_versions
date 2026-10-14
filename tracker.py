@@ -254,6 +254,12 @@ def build_history():
     HISTORY_FILE.write_text(page, encoding="utf-8")
     SITE_DIR.mkdir(exist_ok=True)
     (SITE_DIR / "index.html").write_text(page, encoding="utf-8")
+    # те же данные в JSON — их читает Telegram-бот (worker/worker.js); иконки ему не нужны
+    bot_apps = [{"package": a["package"], "name": a["name"]} for a in apps]
+    (SITE_DIR / "data.json").write_text(
+        json.dumps({"apps": bot_apps, "releases": releases, "unchecked": unchecked_keys()}, ensure_ascii=False),
+        encoding="utf-8",
+    )
     print(f"Страница истории обновлена: {HISTORY_FILE.name} (релизов: {len(releases)})")
 
 
