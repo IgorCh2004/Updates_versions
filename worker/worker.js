@@ -25,6 +25,7 @@ export default {
     if (req.method === "POST") {
       const { key, status } = await req.json();
       const marks = JSON.parse((await env.MARKS.get("marks")) || "{}");
+  const unchecked = new Set(data.unchecked);   // статус есть только у новых версий — как на странице
       if (status) marks[key] = { status, at: new Date().toISOString() };
       else delete marks[key];
       await env.MARKS.put("marks", JSON.stringify(marks));
@@ -128,10 +129,10 @@ async function onCallback(cb, api, env) {
   await api("sendMessage", { chat_id: chatId, text: `${what} — ${PERIODS[period].toLowerCase()}: найдено версий ${list.length}` });
   for (const r of list.slice(0, MAX_SHOWN)) {
     const key = `${r.package}|${r.version}`;
-    const status = (marks[key] && marks[key].status) || "pending";   // у каждой версии виден статус; без отметки — «не проверено»
+    const status = unchecked.has(key) ? (marks[key] && marks[key].status) || "pending" : "";
     const notes = (r.whats_new || "Описание не указано.").slice(0, NOTES_LEN) + ((r.whats_new || "").length > NOTES_LEN ? "…" : "");
     const text = `<b>${esc(r.name)}</b> — версия ${esc(r.version)} (${fmtDate(r.date)})\n`
-      + `${BADGES[status]}\n\n${esc(notes)}\n\n`
+      + (status ? `${BADGES[status]}\n` : "") + `\n${esc(notes)}\n\n`
       + `<a href="https://www.rustore.ru/catalog/app/${encodeURIComponent(r.package)}/versions">Страница в RuStore</a>`;
     await api("sendMessage", { chat_id: chatId, text, parse_mode: "HTML", disable_web_page_preview: true });
   }
