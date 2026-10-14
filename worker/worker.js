@@ -37,8 +37,8 @@ export default {
 // ---------- Telegram ----------
 
 const BADGES = { pending: "⏳ Не проверено", checked: "✅ Проверено", rejected: "❌ Отклонено" };
-const PERIODS = { day: "Сегодня", week: "Неделя", month: "Месяц" };
-const PERIOD_DAYS = { day: 1, week: 7, month: 30 };   // как на странице: сутки / 7 / 30 дней
+const PERIODS = { day: "Сегодня", week: "Неделя", month: "Месяц", all: "За всё время" };
+const PERIOD_DAYS = { day: 1, week: 7, month: 30, all: null };   // как на странице: сутки / 7 / 30 дней / без ограничения
 
 async function telegram(req, env, url) {
   // адрес вебхука содержит токен, так что левые запросы сюда не пройдут
@@ -97,7 +97,10 @@ async function askPeriod(chatId, pkg, data, api) {
   await api("sendMessage", {
     chat_id: chatId,
     text: `${what}\n\nЗа какую дату хочешь посмотреть?`,
-    reply_markup: { inline_keyboard: [Object.entries(PERIODS).map(([p, t]) => ({ text: t, callback_data: `r:${p}:${pkg}` }))] },
+    reply_markup: { inline_keyboard: [
+      ["day", "week", "month"].map(p => ({ text: PERIODS[p], callback_data: `r:${p}:${pkg}` })),
+      [{ text: PERIODS.all, callback_data: `r:all:${pkg}` }],
+    ] },
   });
 }
 
@@ -106,13 +109,12 @@ async function onCallback(cb, api, env) {
   const chatId = cb.message.chat.id;
   if (cb.data === "m") return sendMenu(chatId, await loadData(env), api, env);
   const [kind, period, pkg] = cb.data.split(":");
-  if (kind !== "r" || !PERIOD_DAYS[period]) return;
+  if (kind !== "r" || !(period in PERIOD_DAYS)) return;
   const data = await loadData(env);
   const marks = JSON.parse((await env.MARKS.get("marks")) || "{}");
-  const unchecked = new Set(data.unchecked);
 
   const dayStr = n => new Date(Date.now() + 3 * 3600e3 - n * 864e5).toISOString().slice(0, 10);   // по Москве
-  const from = dayStr(PERIOD_DAYS[period]), to = dayStr(0);
+  const from = PERIOD_DAYS[period] ? dayStr(PERIOD_DAYS[period]) : "0000-01-01", to = dayStr(0);
   const list = data.releases
     .filter(r => (pkg === "*" || r.package === pkg) && (r.date || r.checked) >= from && (r.date || r.checked) <= to)
     .sort((a, b) => (b.date || b.checked).localeCompare(a.date || a.checked));
@@ -126,10 +128,10 @@ async function onCallback(cb, api, env) {
   await api("sendMessage", { chat_id: chatId, text: `${what} — ${PERIODS[period].toLowerCase()}: найдено версий ${list.length}` });
   for (const r of list.slice(0, MAX_SHOWN)) {
     const key = `${r.package}|${r.version}`;
-    const status = unchecked.has(key) ? (marks[key] && marks[key].status) || "pending" : "";
+    const status = (marks[key] && marks[key].status) || "pending";   // у каждой версии виден статус; без отметки — «не проверено»
     const notes = (r.whats_new || "Описание не указано.").slice(0, NOTES_LEN) + ((r.whats_new || "").length > NOTES_LEN ? "…" : "");
     const text = `<b>${esc(r.name)}</b> — версия ${esc(r.version)} (${fmtDate(r.date)})\n`
-      + (status ? `${BADGES[status]}\n` : "") + `\n${esc(notes)}\n\n`
+      + `${BADGES[status]}\n\n${esc(notes)}\n\n`
       + `<a href="https://www.rustore.ru/catalog/app/${encodeURIComponent(r.package)}/versions">Страница в RuStore</a>`;
     await api("sendMessage", { chat_id: chatId, text, parse_mode: "HTML", disable_web_page_preview: true });
   }
