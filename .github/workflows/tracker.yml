@@ -14,7 +14,6 @@ on:
           - test-email
           - debug
           - backfill
-          - features
 
 permissions:
   contents: write
@@ -42,7 +41,6 @@ jobs:
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           MAIL_TO: ${{ secrets.MAIL_TO }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           HISTORY_URL: ${{ vars.HISTORY_URL }}
           MODE: ${{ inputs.mode }}
         run: |
@@ -50,7 +48,6 @@ jobs:
             test-email) python tracker.py --test-email ;;
             debug)      python tracker.py --dry-run --debug ;;
             backfill)   python tracker.py --backfill ;;
-            features)   python tracker.py --features ;;
             *)          python tracker.py ;;
           esac
 
