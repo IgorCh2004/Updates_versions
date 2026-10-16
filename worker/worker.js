@@ -116,9 +116,18 @@ async function onCallback(cb, api, env) {
 
   const dayStr = n => new Date(Date.now() + 3 * 3600e3 - n * 864e5).toISOString().slice(0, 10);   // по Москве
   const from = PERIOD_DAYS[period] ? dayStr(PERIOD_DAYS[period]) : "0000-01-01", to = dayStr(0);
+  const byDate = (a, b) => (b.date || b.checked).localeCompare(a.date || a.checked);
+  const newestFirst = data.releases.slice().sort(byDate);
+  // повтор: текст релиза целиком входит в текст более старой версии того же приложения (Сбер 4.5.1 после 4.5.0 и т. п.)
+  const norm = s => (s || "").toLowerCase().replace(/[\s—–\-•]+/g, " ").trim();
+  const isRepeat = r => {
+    const text = norm(r.whats_new);
+    return text.length > 0 && newestFirst.slice(newestFirst.indexOf(r) + 1)
+      .some(o => o.package === r.package && norm(o.whats_new).includes(text));
+  };
   const list = data.releases
     .filter(r => (pkg === "*" || r.package === pkg) && (r.date || r.checked) >= from && (r.date || r.checked) <= to)
-    .sort((a, b) => (b.date || b.checked).localeCompare(a.date || a.checked));
+    .sort(byDate);
   const app = data.apps.find(a => a.package === pkg);
   const what = app ? app.name : "все приложения";
 
@@ -133,7 +142,7 @@ async function onCallback(cb, api, env) {
     // функции выделены из текста релиза; отметки «проверено/отклонено» — на каждую функцию, только у новых версий (как на странице)
     const found = (data.features || {})[key];
     const feats = !found ? "ещё не разобрано"
-      : !found.length ? "новых функций не выделено"
+      : !found.length ? (isRepeat(r) ? "повтор предыдущей версии" : "новых функций не выделено")
       : found.map((f, i) => {
         const st = unchecked.has(key) ? (marks[`${key}#${i}`] && marks[`${key}#${i}`].status) || "pending" : "";
         return `• ${st ? BADGES[st] + " — " : ""}${esc(f)}`;
