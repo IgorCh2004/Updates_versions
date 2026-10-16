@@ -10,11 +10,13 @@
     python tracker.py               обычная проверка
     python tracker.py --dry-run     показать письмо в консоли, ничего не слать и не сохранять
     python tracker.py --test-email  отправить тестовое сообщение с текущими версиями
+    python tracker.py --features    выделить новые функции для релизов, которых нет в features.json (нужен ANTHROPIC_API_KEY)
     python tracker.py --debug       напечатать сырой ответ RuStore (для отладки)
 
 Куда отправлять — задаётся переменными окружения:
     Telegram: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID (несколько чатов через запятую)
     или почта: SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, MAIL_TO
+Новые функции из текста релиза выделяет Claude: ANTHROPIC_API_KEY (без ключа вкладка «Новые функции» просто не пополняется).
 """
 
 import argparse
@@ -41,6 +43,7 @@ CSV_FILE = ROOT / "releases.csv"
 HISTORY_FILE = ROOT / "history.html"
 ICONS_DIR = ROOT / "icons"
 PENDING_FILE = ROOT / "pending.json"        # новые версии: на странице у них кнопка «Проверить»
+FEATURES_FILE = ROOT / "features.json"      # «пакет|версия» → новые функции, выделенные из текста релиза ([] — функций нет)
 SITE_DIR = ROOT / "docs"  # папка, которую публикует GitHub Pages: только страница истории
 
 API_URL = "https://backapi.rustore.ru/applicationData/overallInfo/{package}"
@@ -182,6 +185,80 @@ def append_csv(rows):
         writer.writerows(rows)
 
 
+# ---------- новые функции из текста релиза ----------
+
+ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
+FEATURES_MODEL = "claude-haiku-5-5"
+FEATURES_PROMPT = """Ты читаешь текст «Что нового» из релиза мобильного приложения брокера и выделяешь из него НОВЫЕ ФУНКЦИИ.
+
+Правила:
+- Верни JSON-массив строк на русском: одна строка — одна конкретная новая функция, коротко (до ~150 символов), без воды и рекламных оборотов.
+- Не включай: исправление ошибок, стабильность, скорость, «улучшения», шутки и общие фразы, а также всё, что непонятно, что именно появилось.
+- Не включай функцию, которая уже есть в списке «Уже записано» для этого приложения: тексты релизов часто повторяются из версии в версию.
+- Если новых функций нет — верни пустой массив [].
+- Ответ — только JSON-массив, без пояснений."""
+
+
+def extract_features(release, known):
+    """Просит Claude выделить новые функции из текста релиза. known — уже записанные функции этого приложения."""
+    user = (
+        f"Приложение: {release['name']}, версия {release['version']}\n\n"
+        f"Уже записано:\n{chr(10).join('- ' + k for k in known) or '(пока ничего)'}\n\n"
+        f"Текст релиза:\n{release['whats_new']}"
+    )
+    body = json.dumps({
+        "model": FEATURES_MODEL, "max_tokens": 1000, "system": FEATURES_PROMPT,
+        "messages": [{"role": "user", "content": user}],
+    }).encode("utf-8")
+    request = urllib.request.Request(ANTHROPIC_URL, data=body, headers={
+        "x-api-key": os.environ["ANTHROPIC_API_KEY"], "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+    })
+    with urllib.request.urlopen(request, timeout=60) as response:
+        text = "".join(b.get("text", "") for b in json.loads(response.read())["content"])
+    m = re.search(r"\[.*\]", text, re.S)
+    features = json.loads(m.group(0)) if m else None
+    if not isinstance(features, list) or not all(isinstance(f, str) for f in features):
+        raise ValueError(f"неожиданный ответ модели: {text[:200]}")
+    return [f.strip() for f in features if f.strip()]
+
+
+def update_features():
+    """Для релизов без записи в features.json выделяет функции. От старых к новым, чтобы повторы отсеивались."""
+    features = load_json(FEATURES_FILE, {})
+    packages = {a["package"] for a in load_json(CONFIG_FILE, {}).get("apps", [])}
+    todo = [r for r in reversed(read_releases())
+            if r["package"] in packages and f"{r['package']}|{r['version']}" not in features]
+    if not todo:
+        return
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        print(f"Нет ANTHROPIC_API_KEY — функции для {len(todo)} релизов не выделены (будут обработаны при следующем запуске).")
+        return
+    for r in todo:
+        key = f"{r['package']}|{r['version']}"
+        if not r["whats_new"] or re.fullmatch(r"\$[0-9a-f]+", r["whats_new"]):
+            features[key] = []  # текста нет — выделять нечего
+            continue
+        known = [f for k, fs in features.items() if k.startswith(r["package"] + "|") for f in fs][-40:]
+        try:
+            features[key] = extract_features(r, known)
+        except Exception as exc:  # без записи — релиз будет обработан при следующем запуске
+            print(f"ОШИБКА выделения функций {r['name']} {r['version']}: {exc}")
+            continue
+        print(f"{r['name']} {r['version']}: функций {len(features[key])}")
+    save_json(FEATURES_FILE, features)
+
+
+def feature_rows(releases):
+    """Плоский список функций для вкладки «Новые функции»; порядок — как у релизов (от новых к старым)."""
+    features = load_json(FEATURES_FILE, {})
+    return [
+        {"name": r["name"], "package": r["package"], "version": r["version"],
+         "date": r["date"], "checked": r["checked"], "text": text}
+        for r in releases for text in features.get(f"{r['package']}|{r['version']}", [])
+    ]
+
+
 # ---------- страница истории ----------
 
 HISTORY_TEMPLATE_FILE = ROOT / "history_template.html"
@@ -250,6 +327,7 @@ def build_history():
     page = (
         template.replace("__UPDATED__", updated).replace("__DATA__", data).replace("__APPS__", apps_json)
         .replace("__UNCHECKED__", json.dumps(unchecked_keys(), ensure_ascii=False).replace("</", "<\\/"))
+        .replace("__FEATURES__", json.dumps(feature_rows(releases), ensure_ascii=False).replace("</", "<\\/"))
     )
     HISTORY_FILE.write_text(page, encoding="utf-8")
     SITE_DIR.mkdir(exist_ok=True)
@@ -424,6 +502,7 @@ def backfill(apps, state, today, dry_run=False):
     if rows:
         append_csv(rows)
         save_state(state)
+    update_features()
     build_history()
     print(f"Добавлено строк в releases.csv: {len(rows)}")
 
@@ -436,6 +515,7 @@ def main():
     parser.add_argument("--dry-run", action="store_true", help="ничего не отправлять и не сохранять")
     parser.add_argument("--test-email", action="store_true", help="отправить тестовое письмо с текущими версиями")
     parser.add_argument("--debug", action="store_true", help="печатать сырой ответ RuStore")
+    parser.add_argument("--features", action="store_true", help="выделить новые функции для релизов, которых ещё нет в features.json")
     parser.add_argument("--backfill", action="store_true", help="один раз заполнить историю прошлыми версиями со страницы RuStore")
     args = parser.parse_args()
     DEBUG = args.debug
@@ -446,6 +526,11 @@ def main():
 
     state = load_json(STATE_FILE, {})
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    if args.features:
+        update_features()
+        build_history()
+        return
 
     if args.backfill:
         backfill(apps, state, today, dry_run=args.dry_run)
@@ -500,6 +585,7 @@ def main():
     save_state(state)
     append_csv([[today, r["name"], r["package"], r["version"], r["date"], r["whats_new"]] for r in baseline + new])
     add_pending(new, today)  # на странице новая версия помечена «не проверено», пока кто-то не нажмёт «Проверить»
+    update_features()
     build_history()
 
 

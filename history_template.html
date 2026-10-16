@@ -18,6 +18,11 @@ body { margin:0; padding:16px; background:var(--bg); color:var(--fg);
 main { max-width:860px; margin:0 auto; }
 h1 { font-size:22px; margin:8px 0 4px; }
 .sub { color:var(--muted); margin:0 0 12px; font-size:13px; }
+.tabs { display:flex; gap:8px; margin:0 0 12px; }
+button.tab { font:inherit; font-size:15px; font-weight:600; padding:8px 16px; border:1px solid var(--line); border-radius:8px;
+  background:var(--card); color:var(--muted); cursor:pointer; }
+button.tab[aria-selected="true"] { background:var(--accent); border-color:var(--accent); color:var(--accent-fg); }
+.feat { margin:8px 0 0; overflow-wrap:anywhere; }
 .panel { position:sticky; top:0; z-index:1; background:var(--bg); padding:8px 0 10px; border-bottom:1px solid var(--line); }
 .row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:8px; }
 .label { color:var(--muted); font-size:13px; min-width:90px; }
@@ -66,6 +71,11 @@ mark { background:#ffe58a; color:#000; border-radius:2px; }
 <h1>История обновлений брокерских приложений</h1>
 <p class="sub">Данные RuStore. Обновлено: __UPDATED__</p>
 
+<div class="tabs" role="tablist">
+  <button class="tab" id="tab-versions" type="button" role="tab">Версии</button>
+  <button class="tab" id="tab-features" type="button" role="tab">Новые функции</button>
+</div>
+
 <div class="panel">
   <div class="row">
     <span class="label">Период</span>
@@ -87,7 +97,7 @@ mark { background:#ffe58a; color:#000; border-radius:2px; }
     <img id="appico" class="ico ico-sel" alt="" hidden>
     <select id="apps" aria-label="Приложение"></select>
   </div>
-  <div class="row">
+  <div class="row" id="statusrow">
     <span class="label">Статус</span>
     <select id="status" aria-label="Статус">
       <option value="">Все</option>
@@ -110,11 +120,12 @@ mark { background:#ffe58a; color:#000; border-radius:2px; }
 <script>
 const RELEASES = __DATA__;
 const APPS = __APPS__;
+const FEATURES = __FEATURES__;   // новые функции, выделенные из текста релизов
 const NEW_VERSIONS = new Set(__UNCHECKED__);   // «пакет|версия» новых версий; у старых плашек нет
 const BADGES = { pending: "Не проверено", checked: "Проверено", rejected: "Отклонено" };
 const $ = id => document.getElementById(id);
 const ICONS = Object.fromEntries(APPS.filter(a => a.icon).map(a => [a.package, a.icon]));
-const state = { period: "month", app: "", status: "", from: "", to: "" };
+const state = { tab: location.hash === "#features" ? "features" : "versions", period: "month", app: "", status: "", from: "", to: "" };
 
 function iso(d) {
   const p = n => String(n).padStart(2, "0");
@@ -190,9 +201,44 @@ function highlight(parent, text, needle) {
   parent.append(text.slice(pos));
 }
 
+function renderFeatures(from, to, needle) {
+  const byApp = FEATURES.filter(f => !state.app || f.package === state.app);
+  const shown = byApp.filter(f => {
+    const d = f.date || f.checked;
+    return d >= from && d <= to && (!needle || f.text.toLowerCase().includes(needle));
+  });
+  const list = $("list");
+  list.replaceChildren();
+  $("count").textContent = "Новых функций за период: " + shown.length +
+    (state.period === "custom" || state.period === "all" ? "" : " (" + fmtDate(from) + " — " + fmtDate(to) + ")");
+  if (!shown.length) {
+    const e = el("div", "empty", "За выбранный период новых функций нет.");
+    if (byApp.length) {
+      const last = byApp[0];
+      e.appendChild(el("div", "", "Последняя: " + last.name + " " + last.version + ", " + fmtDate(last.date)));
+    }
+    list.appendChild(e);
+    return;
+  }
+  for (const f of shown) {
+    const card = el("div", "card");
+    const head = el("div", "head");
+    const app = el("span", "app");
+    if (ICONS[f.package]) { const img = el("img", "ico"); img.src = ICONS[f.package]; img.alt = ""; app.appendChild(img); }
+    app.append(f.name);
+    head.append(app, el("span", "ver", f.version), el("span", "date", fmtDate(f.date)));
+    card.appendChild(head);
+    const text = el("p", "feat");
+    highlight(text, f.text, needle);
+    card.appendChild(text);
+    list.appendChild(card);
+  }
+}
+
 function render() {
   const [from, to] = range();
   const needle = $("q").value.trim().toLowerCase();
+  if (state.tab === "features") return renderFeatures(from, to, needle);
   const byApp = RELEASES.filter(r => !state.app || r.package === state.app);
   const shown = byApp.filter(r => {
     const d = r.date || r.checked;
@@ -252,6 +298,9 @@ function render() {
 }
 
 function sync() {
+  for (const t of ["versions", "features"]) $("tab-" + t).setAttribute("aria-selected", String(state.tab === t));
+  $("statusrow").hidden = state.tab === "features";   // отметки «проверено» относятся к версиям, а не к функциям
+  $("q").placeholder = state.tab === "features" ? "Поиск по новым функциям" : "Поиск по тексту «Что нового»";
   $("period").value = state.period;
   $("apps").value = state.app;
   $("status").value = state.status;
@@ -261,6 +310,11 @@ function sync() {
   render();
 }
 
+for (const t of ["versions", "features"]) $("tab-" + t).addEventListener("click", () => {
+  state.tab = t;
+  history.replaceState(null, "", t === "features" ? "#features" : location.pathname + location.search);
+  sync();
+});
 $("period").addEventListener("change", e => {
   state.period = e.target.value;
   if (state.period === "custom" && !state.from) {
