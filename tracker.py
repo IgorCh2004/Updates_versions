@@ -286,7 +286,8 @@ def build_history():
     # те же данные в JSON — их читает Telegram-бот (worker/worker.js); иконки ему не нужны
     bot_apps = [{"package": a["package"], "name": a["name"]} for a in apps]
     (SITE_DIR / "data.json").write_text(
-        json.dumps({"apps": bot_apps, "releases": releases, "unchecked": unchecked_keys()}, ensure_ascii=False),
+        json.dumps({"apps": bot_apps, "releases": releases, "unchecked": unchecked_keys(),
+                    "features": load_json(FEATURES_FILE, {})}, ensure_ascii=False),
         encoding="utf-8",
     )
     print(f"Страница обновлена: {HISTORY_FILE.name} (релизов: {len(releases)}, функций: {len(feature_rows(releases))})")

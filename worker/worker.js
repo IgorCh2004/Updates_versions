@@ -129,10 +129,17 @@ async function onCallback(cb, api, env) {
   await api("sendMessage", { chat_id: chatId, text: `${what} — ${PERIODS[period].toLowerCase()}: найдено версий ${list.length}` });
   for (const r of list.slice(0, MAX_SHOWN)) {
     const key = `${r.package}|${r.version}`;
-    const status = unchecked.has(key) ? (marks[key] && marks[key].status) || "pending" : "";
     const notes = (r.whats_new || "Описание не указано.").slice(0, NOTES_LEN) + ((r.whats_new || "").length > NOTES_LEN ? "…" : "");
-    const text = `<b>${esc(r.name)}</b> — версия ${esc(r.version)} (${fmtDate(r.date)})\n`
-      + (status ? `${BADGES[status]}\n` : "") + `\n${esc(notes)}\n\n`
+    // функции выделены из текста релиза; отметки «проверено/отклонено» — на каждую функцию, только у новых версий (как на странице)
+    const found = (data.features || {})[key];
+    const feats = !found ? "ещё не разобрано"
+      : !found.length ? "новых функций не выделено"
+      : found.map((f, i) => {
+        const st = unchecked.has(key) ? (marks[`${key}#${i}`] && marks[`${key}#${i}`].status) || "pending" : "";
+        return `• ${st ? BADGES[st] + " — " : ""}${esc(f)}`;
+      }).join("\n");
+    const text = `<b>${esc(r.name)}</b> — версия ${esc(r.version)} (${fmtDate(r.date)})\n\n${esc(notes)}\n\n`
+      + `<b>Предполагаемая фича:</b>\n${found && found.length ? feats : esc(feats)}\n\n`
       + `<a href="https://www.rustore.ru/catalog/app/${encodeURIComponent(r.package)}/versions">Страница в RuStore</a>`;
     await api("sendMessage", { chat_id: chatId, text, parse_mode: "HTML", disable_web_page_preview: true });
   }
