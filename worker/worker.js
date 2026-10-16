@@ -25,7 +25,6 @@ export default {
     if (req.method === "POST") {
       const { key, status } = await req.json();
       const marks = JSON.parse((await env.MARKS.get("marks")) || "{}");
-  const unchecked = new Set(data.unchecked);   // статус есть только у новых версий — как на странице
       if (status) marks[key] = { status, at: new Date().toISOString() };
       else delete marks[key];
       await env.MARKS.put("marks", JSON.stringify(marks));
@@ -113,6 +112,7 @@ async function onCallback(cb, api, env) {
   if (kind !== "r" || !(period in PERIOD_DAYS)) return;
   const data = await loadData(env);
   const marks = JSON.parse((await env.MARKS.get("marks")) || "{}");
+  const unchecked = new Set(data.unchecked);   // статус есть только у новых версий — как на странице
 
   const dayStr = n => new Date(Date.now() + 3 * 3600e3 - n * 864e5).toISOString().slice(0, 10);   // по Москве
   const from = PERIOD_DAYS[period] ? dayStr(PERIOD_DAYS[period]) : "0000-01-01", to = dayStr(0);

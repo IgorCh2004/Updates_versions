@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
-<title>История обновлений брокерских приложений</title>
+<title>Новые функции брокерских приложений</title>
 <style>
 :root { color-scheme: light dark; --bg:#f5f6f8; --card:#fff; --fg:#1d1f23; --muted:#6b7280; --line:#e3e5e9; --accent:#2563eb; --accent-fg:#fff;
   --ok:#15803d; --ok-bg:#dcfce7; --bad:#b91c1c; --bad-bg:#fee2e2; --warn:#92400e; --warn-bg:#fef3c7; }
@@ -18,10 +18,6 @@ body { margin:0; padding:16px; background:var(--bg); color:var(--fg);
 main { max-width:860px; margin:0 auto; }
 h1 { font-size:22px; margin:8px 0 4px; }
 .sub { color:var(--muted); margin:0 0 12px; font-size:13px; }
-.tabs { display:flex; gap:8px; margin:0 0 12px; }
-button.tab { font:inherit; font-size:15px; font-weight:600; padding:8px 16px; border:1px solid var(--line); border-radius:8px;
-  background:var(--card); color:var(--muted); cursor:pointer; }
-button.tab[aria-selected="true"] { background:var(--accent); border-color:var(--accent); color:var(--accent-fg); }
 .feat { margin:8px 0 0; overflow-wrap:anywhere; }
 .panel { position:sticky; top:0; z-index:1; background:var(--bg); padding:8px 0 10px; border-bottom:1px solid var(--line); }
 .row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:8px; }
@@ -68,13 +64,8 @@ mark { background:#ffe58a; color:#000; border-radius:2px; }
 </head>
 <body>
 <main>
-<h1>История обновлений брокерских приложений</h1>
+<h1>Новые функции брокерских приложений</h1>
 <p class="sub">Данные RuStore. Обновлено: __UPDATED__</p>
-
-<div class="tabs" role="tablist">
-  <button class="tab" id="tab-versions" type="button" role="tab">Версии</button>
-  <button class="tab" id="tab-features" type="button" role="tab">Новые функции</button>
-</div>
 
 <div class="panel">
   <div class="row">
@@ -97,7 +88,7 @@ mark { background:#ffe58a; color:#000; border-radius:2px; }
     <img id="appico" class="ico ico-sel" alt="" hidden>
     <select id="apps" aria-label="Приложение"></select>
   </div>
-  <div class="row" id="statusrow">
+  <div class="row">
     <span class="label">Статус</span>
     <select id="status" aria-label="Статус">
       <option value="">Все</option>
@@ -108,7 +99,7 @@ mark { background:#ffe58a; color:#000; border-radius:2px; }
   </div>
   <div class="row" style="margin-bottom:0">
     <span class="label">Поиск</span>
-    <input id="q" type="search" placeholder="Поиск по тексту «Что нового»" aria-label="Поиск">
+    <input id="q" type="search" placeholder="Поиск по новым функциям" aria-label="Поиск">
   </div>
 </div>
 
@@ -118,14 +109,13 @@ mark { background:#ffe58a; color:#000; border-radius:2px; }
 
 </main>
 <script>
-const RELEASES = __DATA__;
+const FEATURES = __FEATURES__;   // новые функции, выделенные из текста релизов; key — «пакет|версия#номер»
 const APPS = __APPS__;
-const FEATURES = __FEATURES__;   // новые функции, выделенные из текста релизов
-const NEW_VERSIONS = new Set(__UNCHECKED__);   // «пакет|версия» новых версий; у старых плашек нет
+const NEW_VERSIONS = new Set(__UNCHECKED__);   // «пакет|версия» новых версий; у функций старых версий плашек нет
 const BADGES = { pending: "Не проверено", checked: "Проверено", rejected: "Отклонено" };
 const $ = id => document.getElementById(id);
 const ICONS = Object.fromEntries(APPS.filter(a => a.icon).map(a => [a.package, a.icon]));
-const state = { tab: location.hash === "#features" ? "features" : "versions", period: "month", app: "", status: "", from: "", to: "" };
+const state = { period: "month", app: "", status: "", from: "", to: "" };
 
 function iso(d) {
   const p = n => String(n).padStart(2, "0");
@@ -152,12 +142,11 @@ function buildAppSelect() {
   box.addEventListener("change", () => { state.app = box.value; sync(); });
 }
 
-const keyOf = r => r.package + "|" + r.version;
-// отметки общие для всей команды: хранятся в Cloudflare Worker («пакет|версия» → {status, at})
+// отметки общие для всей команды: хранятся в Cloudflare Worker («пакет|версия#номер функции» → {status, at})
 const API = "https://quiet-mountain-285d.igorek-rgbdg.workers.dev";
 let marks = {};
-const markOf = r => marks[keyOf(r)] || null;
-const statusOf = r => !NEW_VERSIONS.has(keyOf(r)) ? "" : (markOf(r) || {}).status || "pending";
+const markOf = f => marks[f.key] || null;
+const statusOf = f => !NEW_VERSIONS.has(f.package + "|" + f.version) ? "" : (markOf(f) || {}).status || "pending";
 async function loadMarks() {
   try {
     const res = await fetch(API);
@@ -167,8 +156,8 @@ async function loadMarks() {
   } catch (e) { $("syncerr").hidden = false; }
   render();
 }
-async function setMark(r, value) {
-  const key = keyOf(r), before = marks[key];
+async function setMark(f, value) {
+  const key = f.key, before = marks[key];
   if (value) marks[key] = { status: value, at: new Date().toISOString() }; else delete marks[key];
   render();
   try {
@@ -201,11 +190,14 @@ function highlight(parent, text, needle) {
   parent.append(text.slice(pos));
 }
 
-function renderFeatures(from, to, needle) {
+function render() {
+  const [from, to] = range();
+  const needle = $("q").value.trim().toLowerCase();
   const byApp = FEATURES.filter(f => !state.app || f.package === state.app);
   const shown = byApp.filter(f => {
     const d = f.date || f.checked;
-    return d >= from && d <= to && (!needle || f.text.toLowerCase().includes(needle));
+    return d >= from && d <= to && (!state.status || statusOf(f) === state.status) &&
+      (!needle || f.text.toLowerCase().includes(needle));
   });
   const list = $("list");
   list.replaceChildren();
@@ -221,68 +213,30 @@ function renderFeatures(from, to, needle) {
     return;
   }
   for (const f of shown) {
-    const card = el("div", "card");
+    const st = statusOf(f);
+    const card = el("div", "card" + (st === "rejected" ? " rejected" : ""));
     const head = el("div", "head");
     const app = el("span", "app");
     if (ICONS[f.package]) { const img = el("img", "ico"); img.src = ICONS[f.package]; img.alt = ""; app.appendChild(img); }
     app.append(f.name);
-    head.append(app, el("span", "ver", f.version), el("span", "date", fmtDate(f.date)));
+    head.append(app, el("span", "ver", f.version));
+    if (BADGES[st]) head.appendChild(el("span", "badge " + st, BADGES[st]));
+    const m = markOf(f);
+    if (st && m && m.at) head.appendChild(el("span", "state", fmtDate(m.at.slice(0, 10))));
+    head.appendChild(el("span", "date", fmtDate(f.date)));
     card.appendChild(head);
     const text = el("p", "feat");
     highlight(text, f.text, needle);
     card.appendChild(text);
-    list.appendChild(card);
-  }
-}
-
-function render() {
-  const [from, to] = range();
-  const needle = $("q").value.trim().toLowerCase();
-  if (state.tab === "features") return renderFeatures(from, to, needle);
-  const byApp = RELEASES.filter(r => !state.app || r.package === state.app);
-  const shown = byApp.filter(r => {
-    const d = r.date || r.checked;
-    return d >= from && d <= to && (!state.status || statusOf(r) === state.status) &&
-      (!needle || (r.whats_new + " " + r.version).toLowerCase().includes(needle));
-  });
-  const list = $("list");
-  list.replaceChildren();
-  $("count").textContent = "Обновлений за период: " + shown.length +
-    (state.period === "custom" || state.period === "all" ? "" : " (" + fmtDate(from) + " — " + fmtDate(to) + ")");
-  if (!shown.length) {
-    const e = el("div", "empty", "За выбранный период обновлений нет.");
-    if (byApp.length) {
-      const last = byApp[0];
-      e.appendChild(el("div", "", "Последнее обновление: " + last.name + " " + last.version + ", " + fmtDate(last.date)));
-    }
-    list.appendChild(e);
-    return;
-  }
-  for (const r of shown) {
-    const st = statusOf(r);
-    const card = el("div", "card" + (st === "rejected" ? " rejected" : ""));
-    const head = el("div", "head");
-    const app = el("span", "app");
-    if (ICONS[r.package]) { const img = el("img", "ico"); img.src = ICONS[r.package]; img.alt = ""; app.appendChild(img); }
-    app.append(r.name);
-    head.append(app, el("span", "ver", r.version));
-    if (BADGES[st]) head.appendChild(el("span", "badge " + st, BADGES[st]));
-    const m = markOf(r);
-    if (st && m && m.at) head.appendChild(el("span", "state", fmtDate(m.at.slice(0, 10))));
-    head.appendChild(el("span", "date", fmtDate(r.date)));
-    card.appendChild(head);
-    const notes = el("p", r.whats_new ? "notes" : "notes none");
-    if (r.whats_new) highlight(notes, r.whats_new, needle); else notes.textContent = "Описание не указано.";
-    card.appendChild(notes);
     const a = el("a", "link", "Страница в RuStore");
-    a.href = "https://www.rustore.ru/catalog/app/" + encodeURIComponent(r.package) + "/versions";
+    a.href = "https://www.rustore.ru/catalog/app/" + encodeURIComponent(f.package) + "/versions";
     a.target = "_blank"; a.rel = "noopener";
-    if (st) {   // у новых версий есть кнопки: «Проверить» → «Проверено», «Отклонить» → «Отклонено»
+    if (st) {   // у функций новых версий есть кнопки: «Проверить» → «Проверено», «Отклонить» → «Отклонено»
       const actions = el("div", "actions");
-      const button = (cls, text, mark) => {
-        const b = el("button", cls, text);
+      const button = (cls, label, mark) => {
+        const b = el("button", cls, label);
         b.type = "button";
-        b.addEventListener("click", () => setMark(r, mark));
+        b.addEventListener("click", () => setMark(f, mark));
         return b;
       };
       a.style.marginTop = "0";
@@ -298,9 +252,6 @@ function render() {
 }
 
 function sync() {
-  for (const t of ["versions", "features"]) $("tab-" + t).setAttribute("aria-selected", String(state.tab === t));
-  $("statusrow").hidden = state.tab === "features";   // отметки «проверено» относятся к версиям, а не к функциям
-  $("q").placeholder = state.tab === "features" ? "Поиск по новым функциям" : "Поиск по тексту «Что нового»";
   $("period").value = state.period;
   $("apps").value = state.app;
   $("status").value = state.status;
@@ -310,11 +261,6 @@ function sync() {
   render();
 }
 
-for (const t of ["versions", "features"]) $("tab-" + t).addEventListener("click", () => {
-  state.tab = t;
-  history.replaceState(null, "", t === "features" ? "#features" : location.pathname + location.search);
-  sync();
-});
 $("period").addEventListener("change", e => {
   state.period = e.target.value;
   if (state.period === "custom" && !state.from) {

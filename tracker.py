@@ -3,8 +3,8 @@
 Раз в день проверяет приложения из config.json. Если вышла новая версия,
 отправляет одно письмо-сводку и дописывает строку в releases.csv.
 
-Новая версия сразу появляется в истории с плашкой «Не проверено»; кнопка «Проверить» на странице
-истории меняет её на зелёную «Проверено» (отметка хранится в браузере того, кто нажал).
+Страница показывает новые функции, выделенные из текста релизов. Функции новой версии сразу появляются
+с плашкой «Не проверено»; кнопки «Проверить» / «Отклонить» ставят общую отметку (хранится в Cloudflare Worker).
 
 Запуск:
     python tracker.py               обычная проверка
@@ -250,12 +250,13 @@ def update_features():
 
 
 def feature_rows(releases):
-    """Плоский список функций для вкладки «Новые функции»; порядок — как у релизов (от новых к старым)."""
+    """Плоский список функций для страницы; порядок — как у релизов (от новых к старым).
+    key («пакет|версия#номер») — ключ общей отметки «проверено/отклонено»; список функций релиза после записи не меняется."""
     features = load_json(FEATURES_FILE, {})
     return [
-        {"name": r["name"], "package": r["package"], "version": r["version"],
-         "date": r["date"], "checked": r["checked"], "text": text}
-        for r in releases for text in features.get(f"{r['package']}|{r['version']}", [])
+        {"key": f"{r['package']}|{r['version']}#{i}", "name": r["name"], "package": r["package"],
+         "version": r["version"], "date": r["date"], "checked": r["checked"], "text": text}
+        for r in releases for i, text in enumerate(features.get(f"{r['package']}|{r['version']}", []))
     ]
 
 
@@ -320,12 +321,11 @@ def build_history():
     packages = {a["package"] for a in apps}
     # на странице только приложения из config.json (бывшие, например ВТБ, остаются в CSV, но скрыты)
     releases = [r for r in read_releases() if r["package"] in packages]
-    data = json.dumps(releases, ensure_ascii=False).replace("</", "<\\/")
     apps_json = json.dumps(apps, ensure_ascii=False).replace("</", "<\\/")
     updated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     template = HISTORY_TEMPLATE_FILE.read_text(encoding="utf-8")
     page = (
-        template.replace("__UPDATED__", updated).replace("__DATA__", data).replace("__APPS__", apps_json)
+        template.replace("__UPDATED__", updated).replace("__APPS__", apps_json)
         .replace("__UNCHECKED__", json.dumps(unchecked_keys(), ensure_ascii=False).replace("</", "<\\/"))
         .replace("__FEATURES__", json.dumps(feature_rows(releases), ensure_ascii=False).replace("</", "<\\/"))
     )
@@ -338,7 +338,7 @@ def build_history():
         json.dumps({"apps": bot_apps, "releases": releases, "unchecked": unchecked_keys()}, ensure_ascii=False),
         encoding="utf-8",
     )
-    print(f"Страница истории обновлена: {HISTORY_FILE.name} (релизов: {len(releases)})")
+    print(f"Страница обновлена: {HISTORY_FILE.name} (релизов: {len(releases)}, функций: {len(feature_rows(releases))})")
 
 
 # ---------- письмо ----------
